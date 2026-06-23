@@ -1,0 +1,14 @@
+# Python build artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Keys and local configs
+api_key.txt
+app_last_novel.json
+
+# Local directories / Output / Temp files
+.sync/
+Compiled Novel/
+translated_novels/

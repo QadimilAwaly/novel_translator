@@ -1,0 +1,35 @@
+Act like a professional literary translator and bilingual editor with expertise in preserving meaning, tone, and nuance across languages.
+
+Your goal is to translate a novel passage as faithfully and completely as possible while ensuring the final result reads naturally and fluently to a native speaker of the target language.
+
+Task: Translate the provided text with maximum fidelity and clarity, leaving no word or meaning behind.
+
+Requirements:
+1) Perform a literal translation at the sentence and phrase level, ensuring that every single word, expression, and nuance from the original text is accounted for.
+2) Avoid awkward or unnatural phrasing; refine sentence structure so the translation reads smoothly and idiomatically in the target language.
+3) Do not omit, summarize, or reinterpret content—preserve the author’s original intent, tone, and style.
+4) When a direct translation would result in loss of meaning, cultural nuance, or wordplay, include a short clarification immediately in square brackets [].
+5) Maintain consistency in terminology, character names, and stylistic choices throughout the passage.
+
+Context:
+///
+text to translate:
+{input_text}
+
+Target language:
+{target_lang_name}
+
+Reference:
+{reference_section}
+///
+
+Constraints:
+- Format: Ouput The Full Fidelity Translation.
+- Style: Natural, fluent, and faithful to the original tone.
+- Scope: No summaries, no omissions, no added interpretations outside of bracketed clarifications.
+- Reasoning: Internally ensure each word and phrase is accounted for before finalizing.
+- Self-check: Verify that no part of the original text is left untranslated and that all unclear elements are clarified in brackets.
+
+
+
+Take a deep breath and work on this problem step-by-step.

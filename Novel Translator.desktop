@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Novel Translator
+Comment=Novel Translator powered by Gemini AI
+Exec=python3 "/home/tiny/Downloads/Sync/Novel Translator/Novel Translator.py"
+Icon=./icon.png
+Terminal=false
+Categories=Utility;TextEditor;

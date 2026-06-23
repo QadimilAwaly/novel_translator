@@ -1,0 +1,140 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="content-wrapper">
+  <!-- Control Panel Section -->
+  <div class="control-section">
+    <div class="section-header">
+      <i class="fas fa-sliders-h me-2"></i>
+      <h2>Translation Control</h2>
+    </div>
+
+    <div class="control-grid">
+      <!-- Novel Input -->
+      <div class="control-group">
+        <label class="control-label">
+          <span class="label-icon"><i class="fas fa-pen-fancy"></i></span>
+          Novel Title
+        </label>
+        <input id="title" class="control-input" placeholder="Enter novel title..." />
+      </div>
+
+      <!-- Saved Novels -->
+      <div class="control-group">
+        <label class="control-label">
+          <span class="label-icon"><i class="fas fa-bookmark"></i></span>
+          Saved Novel
+        </label>
+        <select id="saved" class="control-select">
+          <option value="">-- Select from library --</option>
+          {% for t in titles %}
+          <option value="{{t}}">{{t}}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <!-- Language Selection -->
+      <div class="control-group">
+        <label class="control-label">
+          <span class="label-icon"><i class="fas fa-globe"></i></span>
+          Translate To
+        </label>
+        <select id="lang" class="control-select">
+          {% for k,v in languages.items() %}
+          <option value="{{k}}">{{k}}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <!-- Model Selection -->
+      <div class="control-group">
+        <label class="control-label">
+          <span class="label-icon"><i class="fas fa-brain"></i></span>
+          AI Model
+        </label>
+        <select id="model" class="control-select">
+          <option>Loading...</option>
+        </select>
+      </div>
+
+      <!-- Prompt Selection -->
+      <div class="control-group">
+        <label class="control-label">
+          <span class="label-icon"><i class="fas fa-wand-magic-sparkles"></i></span>
+          Prompt Template
+        </label>
+        <select id="prompt" class="control-select">
+          {% for p in prompts %}
+          <option value="{{p}}">{{p}}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <!-- References Section - Spans full width on mobile -->
+      <div class="control-group full-width">
+        <label class="control-label">
+          <span class="label-icon"><i class="fas fa-book"></i></span>
+          Novel References
+        </label>
+        <textarea id="refs" class="control-textarea" rows="5" placeholder="Add references here (context, character names, terms, etc.)"></textarea>
+      </div>
+
+      <!-- AI Recommendations Section -->
+      <div class="control-group full-width">
+        <label class="control-label">
+          <span class="label-icon"><i class="fas fa-sparkles"></i></span>
+          AI Recommendations
+        </label>
+        <textarea id="recommendations" class="control-textarea" rows="4" placeholder="AI reference recommendations will appear here..."></textarea>
+        <div class="recommendation-hint">Review and adjust recommended reference text.</div>
+        <button id="applyRecommendationBtn" class="btn-secondary-action">
+          <i class="fas fa-check me-2"></i>Add Recommendations
+        </button>
+      </div>
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="control-actions">
+      <button id="translateBtn" class="btn-primary-action">
+        <i class="fas fa-language me-2"></i>Translate
+      </button>
+      <button id="cancelBtn" class="btn-danger-action" disabled>
+        <i class="fas fa-ban me-2"></i>Cancel
+      </button>
+      <button id="saveBtn" class="btn-secondary-action">
+        <i class="fas fa-save me-2"></i>Save
+      </button>
+    </div>
+  </div>
+
+  <!-- Editor Section -->
+  <div class="editor-section">
+    <div class="editors-container">
+      <!-- Input Editor -->
+      <div class="editor-panel">
+        <div class="editor-header">
+          <div>
+            <h3><i class="fas fa-file-import me-2"></i>Source</h3>
+            <span class="editor-hint">Original Text</span>
+          </div>
+          <span id="inputCharCount" class="char-count">0</span>
+        </div>
+        <textarea id="input" class="editor-textarea" placeholder="Paste your original novel chapter here..."></textarea>
+      </div>
+
+      <!-- Output Editor -->
+      <div class="editor-panel">
+        <div class="editor-header">
+          <div>
+            <h3><i class="fas fa-file-export me-2"></i>Output</h3>
+            <span class="editor-hint">Translation result</span>
+          </div>
+          <span id="outputCharCount" class="char-count">0</span>
+        </div>
+        <textarea id="output" class="editor-textarea" placeholder="Translated text will appear here..."></textarea>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
