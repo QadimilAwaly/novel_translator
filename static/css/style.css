@@ -106,19 +106,10 @@ body {
 }
 
 .content-wrapper {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: .15rem;
+  display: flex;
+  flex-direction: column;
   max-width: 1800px;
   margin: 0 auto;
-}
-
-/* Responsive Design */
-@media (max-width: 1200px) {
-  .content-wrapper {
-    grid-template-columns: 1fr;
-    gap: 1.5rem;
-  }
 }
 
 @media (max-width: 768px) {
@@ -577,4 +568,50 @@ NaNeditor-panel {
 *:focus-visible {
   outline: 2px solid var(--color-accent-primary);
   outline-offset: 2px;
+}
+
+/* ===== TABS & COMPILER LAYOUT ===== */
+.custom-tabs {
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 1rem;
+}
+.custom-tabs .nav-item .nav-link {
+  color: var(--color-text-secondary);
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  font-weight: 600;
+  padding: 0.75rem 1.5rem;
+  transition: all 0.3s ease;
+}
+.custom-tabs .nav-item .nav-link:hover {
+  color: var(--color-text-primary);
+  border-bottom-color: var(--color-border);
+}
+.custom-tabs .nav-item .nav-link.active {
+  color: var(--color-accent-primary);
+  border-bottom-color: var(--color-accent-primary);
+}
+
+.content-grid-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.15rem;
+}
+@media (max-width: 1200px) {
+  .content-grid-layout {
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+  }
+}
+@media (max-width: 768px) {
+  .content-grid-layout {
+    gap: 1rem;
+  }
+}
+
+.chapter-checkbox {
+  accent-color: var(--color-accent-primary);
+  width: 1.2rem;
+  height: 1.2rem;
 }

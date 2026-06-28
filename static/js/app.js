@@ -281,4 +281,137 @@ document.addEventListener('DOMContentLoaded', function() {
 
   function showLoading(text){ if(loadingOverlay){ loadingText.textContent = text||''; loadingOverlay.classList.remove('d-none'); } }
   function hideLoading(){ if(loadingOverlay){ loadingOverlay.classList.add('d-none'); loadingText.textContent=''; } }
+
+  // --- Compiler JS Logic ---
+  const compilerFolder = document.getElementById('compilerFolder');
+  const compilerChapterList = document.getElementById('compilerChapterList');
+  const compilerTitle = document.getElementById('compilerTitle');
+  const compilerAuthor = document.getElementById('compilerAuthor');
+  const compileBtn = document.getElementById('compileBtn');
+  const compilerSelectAll = document.getElementById('compilerSelectAll');
+  const compilerDeselectAll = document.getElementById('compilerDeselectAll');
+  const compilerDownloadSection = document.getElementById('compilerDownloadSection');
+  const compilerDownloadBtn = document.getElementById('compilerDownloadBtn');
+  const compilerCover = document.getElementById('compilerCover');
+
+  function loadCompilerNovels() {
+    if(!compilerFolder) return;
+    axios.get('/compiler/novels').then(r => {
+      const novels = r.data.novels || [];
+      compilerFolder.innerHTML = '<option value="">-- Select Folder --</option>';
+      novels.forEach(n => {
+        const o = document.createElement('option');
+        o.value = n; o.textContent = n;
+        compilerFolder.appendChild(o);
+      });
+    }).catch(console.error);
+  }
+  
+  // Load on start
+  loadCompilerNovels();
+  
+  if (compilerFolder) {
+    compilerFolder.addEventListener('change', e => {
+      const novel = e.target.value;
+      compilerDownloadSection.classList.add('d-none');
+      
+      if (!novel) {
+        compilerChapterList.innerHTML = '<div class="text-center text-muted py-4">Select a novel folder first</div>';
+        compilerTitle.value = '';
+        return;
+      }
+      
+      // Suggest title based on folder name
+      let suggestedTitle = novel.replace(/[_-]/g, ' ');
+      suggestedTitle = suggestedTitle.replace(/\b\w/g, l => l.toUpperCase());
+      compilerTitle.value = suggestedTitle;
+      
+      compilerChapterList.innerHTML = '<div class="text-center py-4"><div class="spinner-border text-primary" role="status"></div></div>';
+      
+      axios.get('/compiler/chapters', { params: { novel: novel } }).then(r => {
+        const chapters = r.data.chapters || [];
+        if (chapters.length === 0) {
+          compilerChapterList.innerHTML = '<div class="text-center text-warning py-4">No .txt chapters found in this folder</div>';
+          return;
+        }
+        
+        compilerChapterList.innerHTML = '';
+        chapters.forEach(ch => {
+          const id = 'chk_' + ch.replace(/[^a-zA-Z0-9]/g, '_');
+          const div = document.createElement('div');
+          div.className = 'form-check mb-2';
+          div.innerHTML = `
+            <input class="form-check-input chapter-checkbox" type="checkbox" value="${ch}" id="${id}" checked>
+            <label class="form-check-label" for="${id}">${ch}</label>
+          `;
+          compilerChapterList.appendChild(div);
+        });
+      }).catch(err => {
+        compilerChapterList.innerHTML = `<div class="text-center text-danger py-4">Error loading chapters: ${err.message}</div>`;
+      });
+    });
+  }
+  
+  if (compilerSelectAll) {
+    compilerSelectAll.addEventListener('click', () => {
+      document.querySelectorAll('.chapter-checkbox').forEach(cb => cb.checked = true);
+    });
+  }
+  
+  if (compilerDeselectAll) {
+    compilerDeselectAll.addEventListener('click', () => {
+      document.querySelectorAll('.chapter-checkbox').forEach(cb => cb.checked = false);
+    });
+  }
+  
+  if (compileBtn) {
+    compileBtn.addEventListener('click', () => {
+      const folder = compilerFolder.value;
+      const title = compilerTitle.value.trim();
+      const author = compilerAuthor.value.trim() || 'Unknown';
+      
+      if (!folder || !title) {
+        alert('Please select a novel folder and enter a title.');
+        return;
+      }
+      
+      const selectedCheckboxes = document.querySelectorAll('.chapter-checkbox:checked');
+      if (selectedCheckboxes.length === 0) {
+        alert('Please select at least one chapter to compile.');
+        return;
+      }
+      
+      const selectedFiles = Array.from(selectedCheckboxes).map(cb => cb.value);
+      
+      const formData = new FormData();
+      formData.append('novel_dir', folder);
+      formData.append('title', title);
+      formData.append('author', author);
+      formData.append('selected_files', JSON.stringify(selectedFiles));
+      
+      if (compilerCover && compilerCover.files.length > 0) {
+        formData.append('cover_image', compilerCover.files[0]);
+      }
+      
+      compileBtn.disabled = true;
+      compileBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Compiling...';
+      compilerDownloadSection.classList.add('d-none');
+      
+      axios.post('/compiler/compile', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      }).then(r => {
+        compileBtn.disabled = false;
+        compileBtn.innerHTML = '<i class="fas fa-file-export me-2"></i>Compile EPUB';
+        
+        if (r.data.success) {
+          compilerDownloadBtn.href = r.data.download_url;
+          compilerDownloadSection.classList.remove('d-none');
+        }
+      }).catch(err => {
+        compileBtn.disabled = false;
+        compileBtn.innerHTML = '<i class="fas fa-file-export me-2"></i>Compile EPUB';
+        alert('Compilation failed: ' + (err.response?.data?.error || err.message));
+      });
+    });
+  }
 });

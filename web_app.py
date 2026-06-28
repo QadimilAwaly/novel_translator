@@ -275,6 +275,79 @@ def save_chapter():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+from flask import send_file
+import json
+
+@app.route('/compiler/novels')
+def compiler_novels():
+    _, _, _, export_svc = create_services()
+    try:
+        novels = export_svc.get_translated_novels()
+        return jsonify({'novels': novels})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/compiler/chapters')
+def compiler_chapters():
+    _, _, _, export_svc = create_services()
+    novel = request.args.get('novel', '')
+    if not novel:
+        return jsonify({'error': 'novel parameter is required'}), 400
+    try:
+        chapters = export_svc.get_novel_chapters(novel)
+        return jsonify({'chapters': chapters})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/compiler/compile', methods=['POST'])
+def compiler_compile():
+    _, _, _, export_svc = create_services()
+    
+    novel_dir = request.form.get('novel_dir', '')
+    title = request.form.get('title', '')
+    author = request.form.get('author', 'Unknown')
+    selected_files_json = request.form.get('selected_files', '[]')
+    
+    if not novel_dir or not title:
+        return jsonify({'error': 'novel_dir and title are required'}), 400
+        
+    try:
+        selected_files = json.loads(selected_files_json)
+    except json.JSONDecodeError:
+        return jsonify({'error': 'selected_files must be a valid JSON array'}), 400
+        
+    if not selected_files:
+        return jsonify({'error': 'No chapters selected for compilation'}), 400
+        
+    cover_image_data = None
+    cover_filename = None
+    if 'cover_image' in request.files:
+        file = request.files['cover_image']
+        if file and file.filename:
+            cover_filename = file.filename
+            cover_image_data = file.read()
+            
+    try:
+        output_path = export_svc.compile_epub(novel_dir, title, author, selected_files, cover_image_data, cover_filename)
+        return jsonify({
+            'success': True,
+            'download_url': f'/compiler/download/{os.path.basename(output_path)}',
+            'filename': os.path.basename(output_path)
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+        
+@app.route('/compiler/download/<filename>')
+def compiler_download(filename):
+    output_dir = os.path.join(os.getcwd(), "Compiled Novel")
+    safe_filename = os.path.basename(filename)
+    file_path = os.path.join(output_dir, safe_filename)
+    
+    if not os.path.exists(file_path):
+        return "File not found", 404
+        
+    return send_file(file_path, as_attachment=True, mimetype='application/epub+zip')
+
 
 def run_app(host='127.0.0.1', port=5000, open_browser=True):
     url = f'http://{host}:{port}/'

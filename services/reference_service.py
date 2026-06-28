@@ -53,9 +53,9 @@ class ReferenceService:
                 continue
             
             # Extract the original text before the arrow (handles both formats)
-            # Format 1: "- Character Name: original -> translated [tag]"
+            # Format 1: "- Type Name: original -> translated [tag]"
             # Format 2: "- original -> translated [tag]"
-            match = re.search(r'-\s*(?:\w+\s*:\s*)?(.+?)\s*->', line)
+            match = re.search(r'-\s*(?:[^:]+:\s*)?(.+?)\s*->', line)
             if match:
                 original_text = match.group(1).strip()
                 # Check if the original text appears in the input

@@ -1,12 +1,14 @@
 # services/translation_service.py
 import re
 import time
-import google.generativeai as genai
+import urllib.request
+import urllib.error
+import json
 import os
 
 class TranslationService:
     def __init__(self, api_key, fallback_prompt_template):
-        genai.configure(api_key=api_key)
+        self.api_key = api_key
         self.fallback_prompt_template = fallback_prompt_template
         self._models_cache = None
         self._cache_time = 0
@@ -18,11 +20,16 @@ class TranslationService:
             return self._models_cache
 
         try:
-            all_models = genai.list_models()
+            url = f"https://generativelanguage.googleapis.com/v1beta/models?key={self.api_key}"
+            req = urllib.request.Request(url, headers={'Content-Type': 'application/json'})
+            with urllib.request.urlopen(req, timeout=30) as response:
+                res = json.loads(response.read().decode('utf-8'))
+                
+            all_models = res.get('models', [])
             available_models = [
-                m.name for m in all_models
-                if "generateContent" in m.supported_generation_methods and
-                   (m.name.startswith('models/gemini') or m.name.startswith('models/gemma'))
+                m.get('name') for m in all_models
+                if "generateContent" in m.get("supportedGenerationMethods", []) and
+                   (m.get('name', '').startswith('models/gemini') or m.get('name', '').startswith('models/gemma'))
             ]
             # Order preference logic here
             preferred = ['models/gemini-3.1-flash', 'models/gemini-3.1-flash-lite', 'models/gemini-2.5-flash', 'models/gemini-2.5-flash-lite']
@@ -32,6 +39,13 @@ class TranslationService:
             self._models_cache = preferred_order + remaining
             self._cache_time = current_time
             return self._models_cache
+        except urllib.error.HTTPError as e:
+            try:
+                error_content = json.loads(e.read().decode('utf-8'))
+                error_msg = error_content.get('error', {}).get('message', str(e))
+            except Exception:
+                error_msg = str(e)
+            raise RuntimeError(f"Failed to retrieve models: {error_msg}")
         except Exception as e:
             raise RuntimeError(f"Failed to retrieve models: {e}")
 
@@ -40,7 +54,9 @@ class TranslationService:
             return "", "Translation cancelled by user."
 
         try:
-            model_instance = genai.GenerativeModel(selected_model_name)
+            if not selected_model_name.startswith('models/'):
+                selected_model_name = f"models/{selected_model_name}"
+                
             reference_section = ""
             if novel_references:
                 reference_section = f"**Novel References:**\nUse the following references:\n---\n{novel_references}\n---"
@@ -52,32 +68,46 @@ class TranslationService:
                 {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
                 {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
             ]
+            
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "safetySettings": safety_settings
+            }
+
+            url = f"https://generativelanguage.googleapis.com/v1beta/{selected_model_name}:generateContent?key={self.api_key}"
+            req = urllib.request.Request(
+                url, 
+                data=json.dumps(payload).encode('utf-8'),
+                headers={'Content-Type': 'application/json'},
+                method='POST'
+            )
 
             try:
-                response = model_instance.generate_content(
-                    prompt,
-                    safety_settings=safety_settings,
-                    request_options={'timeout': 300}
-                )
-            except ValueError as e:
-                if "request_options" in str(e):
-                    response = model_instance.generate_content(prompt, safety_settings=safety_settings)
-                else:
-                    raise
-            except TypeError:
-                response = model_instance.generate_content(prompt, safety_settings=safety_settings)
+                with urllib.request.urlopen(req, timeout=300) as response:
+                    res_data = json.loads(response.read().decode('utf-8'))
+            except urllib.error.HTTPError as e:
+                try:
+                    error_content = json.loads(e.read().decode('utf-8'))
+                    error_msg = error_content.get('error', {}).get('message', str(e))
+                except Exception:
+                    error_msg = str(e)
+                raise RuntimeError(error_msg)
 
             if cancel_flag.is_set():
                 return "", "Translation cancelled by user."
-
             
-            if not response.candidates or not response.candidates[0].content.parts:
-                finish_reason = ""
-                if response.candidates:
-                    finish_reason = f" Finish reason: {response.candidates[0].finish_reason}"
-                raise RuntimeError(f"No translation candidates were returned by the model.{finish_reason}")
-
-            return self._parse_response(response.text)
+            candidates = res_data.get('candidates', [])
+            if not candidates:
+                raise RuntimeError("No translation candidates were returned by the model.")
+                
+            parts = candidates[0].get('content', {}).get('parts', [])
+            if not parts:
+                finish_reason = candidates[0].get('finishReason', '')
+                raise RuntimeError(f"No translation candidates were returned by the model. Finish reason: {finish_reason}")
+                
+            text = "".join(part.get('text', '') for part in parts)
+            return self._parse_response(text)
+            
         except Exception as e:
             if cancel_flag.is_set():
                 return "", "Translation cancelled by user."

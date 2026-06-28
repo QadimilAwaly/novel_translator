@@ -57,8 +57,9 @@ graph TD
 ### 1. Prerequisites
 Install the required dependencies using pip:
 ```bash
-pip install google-generativeai flask ebooklib beautifulsoup4 lxml
+pip install flask ebooklib beautifulsoup4 lxml
 ```
+> Note: The application uses Python's built-in `urllib` to make direct REST API requests to Gemini. `google-generativeai` SDK is no longer needed, making it fully compatible with Termux on Android.
 
 ### 2. API Key Configuration
 Create a file named `api_key.txt` in the root directory and paste your Google Gemini API key inside it:
