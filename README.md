@@ -1,12 +1,46 @@
-# Novel Translator & Compiler
+# Novel Translator & Compiler 📚🤖
 
-An AI-powered translation and compilation suite designed specifically for translating web novels while maintaining character name and terminology consistency across chapters. It utilizes Google's Gemini models for context-aware translations and includes a compiler to bundle translated chapters into styled EPUB e-books.
+Sebuah aplikasi penerjemah dan kompilator e-book (EPUB) canggih bertenaga AI (Google Gemini). Aplikasi ini didesain khusus untuk para penerjemah web novel, memungkinkan proses translasi beribu-ribu kata menjadi sangat mudah dengan tetap menjaga konsistensi nama karakter dan istilah di setiap *chapter*.
 
 ---
 
-## How It Works (Architecture)
+## 🌟 Fungsi Utama
 
-The application follows a clean Model-View-Controller (MVC) architecture, separating the core translation, file export, and term referencing services from the interface representations.
+1. **Penerjemahan AI Kontekstual yang Natural**  
+   Menerjemahkan novel bahasa asing (Korea, Jepang, China, dll) ke berbagai bahasa target dengan gaya bahasa luwes bak penerjemah manusia, menggunakan model Google Gemini API terbaru.
+
+2. **Manajemen Referensi (Glosarium) Otomatis**  
+   Mengingat nama karakter, tempat, dan jurus sihir. Aplikasi otomatis mendeteksi karakter baru dan merekomendasikan penulisannya. Di *chapter* berikutnya, AI dipaksa memakai nama yang sama sehingga tidak ada lagi masalah "nama tokoh berubah-ubah".
+
+3. **Injeksi Token Super Efisien (Smart Filter)**  
+   Hanya menyuntikkan referensi karakter yang **benar-benar muncul** di dalam teks sumber ke dalam *prompt* AI. Hal ini menghemat ribuan kuota token API dan mencegah AI mengalami kebingungan (*hallucination*).
+
+4. **Kompilator EPUB Bawaan (Novel Compiler)**  
+   Gabungkan ratusan *chapter* berformat `.txt` menjadi sebuah file E-book `.epub` standar secara instan. Fitur ini otomatis membuat Daftar Isi (TOC), mengurutkan bab dengan cerdas (*natural sorting*), dan dapat disisipkan gambar *cover*.
+
+5. **Penyimpanan Terstruktur**  
+   Otomatis membuat dan menata *folder* penyimpanan berdasarkan judul novel, serta memberikan penomoran bab secara berurutan.
+
+---
+
+## 🚀 Keunggulan Aplikasi
+
+* **📱 Dukungan Penuh Termux (Android)**  
+  Aplikasi ini tidak bergantung pada SDK resmi bawaan Google yang sulit di-install di HP. Sistem telah ditulis ulang menggunakan HTTP REST murni, sehingga 100% berjalan mulus di dalam Termux Android tanpa kendala kompilasi C++!
+* **🖥️ Dual Antarmuka (Web UI & Desktop GUI)**  
+  Tersedia tampilan Web modern yang responsif (berbasis Flask & Bootstrap 5) untuk digunakan via *browser*, serta aplikasi Desktop klasik (Tkinter) sebagai cadangan. Tab "Translator" dan "Compiler" kini tergabung mulus di antarmuka Web.
+* **⚡ Ringan dan Cepat**  
+  Proses terjemahan *chapter* panjang dapat dikerjakan di latar belakang (*async job*) tanpa membuat antarmuka macet (*freeze*).
+* **🧠 Bebas Pilih Prompt & Model AI**  
+  Pengguna bebas memilih dari daftar Model Gemini yang tersedia (`gemini-2.5-flash`, `gemini-2.0-flash`, dll) dan gaya *prompt* translasi sesuai *genre* novel (Action, Romance, Sci-Fi).
+* **🛡️ Bebas Filter Kasar**  
+  Pengaturan bawaan mematikan ambang batas sensor API (*Harassment, Hate Speech, Sexually Explicit, Dangerous Content* diubah ke `BLOCK_NONE`), sehingga adegan pertarungan, darah, atau kata makian dalam novel fiksi tidak ditolak oleh AI.
+
+---
+
+## ⚙️ Arsitektur Sistem
+
+Aplikasi ini menggunakan pola arsitektur **Model-View-Controller (MVC)** yang bersih:
 
 ```mermaid
 graph TD
@@ -17,75 +51,52 @@ graph TD
     DesktopGUI --> Controller
     
     Controller --> ConfigService[config.py Config Loader]
-    Controller --> TransService[services/translation_service.py]
+    Controller --> TransService[services/translation_service.py (REST API Gemini)]
     Controller --> RefService[services/reference_service.py]
-    Controller --> ExportService[services/export_service.py]
-    
-    TransService --> Gemini[Google Gemini API]
-    RefService --> JSON[references/*_references.json]
-    ExportService --> TextFiles[translated_novels/*/*.txt]
+    Controller --> ExportService[services/export_service.py (EPUB & TXT)]
 ```
-
-### Core Components
-
-1. **`config.py` (Configuration Loader)**
-   - Manages base directories for prompt templates, reference glossaries, and exported novel chapters.
-   - Loads your API key from the environment (`GEMINI_API_KEY`) or from a local `api_key.txt` file.
-
-2. **`services/translation_service.py` (Gemini Integration)**
-   - Configures the `google-generativeai` SDK.
-   - Dynamically retrieves available Gemini models.
-   - Builds targeted translation prompts injecting the source text, target language, and relevant glossary references.
-
-3. **`services/reference_service.py` (Glossary & Term Matching)**
-   - Saves and loads glossary lists (`references/<novel_name>_references.json`).
-   - **Smart Filtering:** Matches original words/names in the source text and filters the dictionary before sending it to Gemini, significantly reducing API token consumption and model noise.
-   - Parses newly introduced characters recommended by the Gemini API from the translation output and appends them to the dictionary.
-
-4. **`services/export_service.py` (Chapter Export)**
-   - Organizes, sanitizes, and writes translated chapters to disk in structured paths (`translated_novels/<novel_name>/<novel_name>_<chapter_number>.txt`).
-   - Automatically calculates next chapter numbers sequentially.
-
-5. **`Novel Compiler.py` (E-book Packager)**
-   - A standalone Tkinter GUI application designed to package compiled text files into standard `.epub` files.
-   - Supports cover images, chapter sorting (alphanumeric/natural sorting), and customizable stylesheet formatting.
 
 ---
 
-## Setup & Installation
+## 🛠️ Instalasi & Persiapan
 
-### 1. Prerequisites
-Install the required dependencies using pip:
+### 1. Persyaratan Pustaka (Dependencies)
+Pastikan Anda sudah menginstal Python. Kemudian, install modul yang dibutuhkan menggunakan pip:
 ```bash
-pip install flask ebooklib beautifulsoup4 lxml
+pip install -r requirements.txt
 ```
-> Note: The application uses Python's built-in `urllib` to make direct REST API requests to Gemini. `google-generativeai` SDK is no longer needed, making it fully compatible with Termux on Android.
+*(Atau jalankan secara manual: `pip install flask ebooklib beautifulsoup4 lxml`)*
 
-### 2. API Key Configuration
-Create a file named `api_key.txt` in the root directory and paste your Google Gemini API key inside it:
-```
+### 2. Konfigurasi API Key
+Anda membutuhkan **Google Gemini API Key**. 
+Buat file teks bernama `api_key.txt` di dalam folder root aplikasi ini, lalu paste API Key Anda di dalamnya:
+```text
 AIzaSy...
 ```
-*(Alternatively, you can export `GEMINI_API_KEY` into your system environment variables).*
+*(Alternatif: Anda juga bisa menyimpannya di variabel lingkungan OS / Environment Variables dengan nama `GEMINI_API_KEY`).*
 
 ---
 
-## How to Run
+## 💻 Cara Menjalankan Aplikasi
 
-### Run the Desktop GUI
-To launch the native Tkinter GUI for translating chapters:
+Aplikasi utama dijalankan melalui `main.py`.
+
+### 1. Menggunakan Web UI (Disarankan)
+Buka terminal/CMD/Termux dan jalankan perintah berikut:
+```bash
+python main.py --web
+```
+Setelah berjalan, buka _browser_ Anda di alamat `http://127.0.0.1:5000`. 
+Di sinilah Anda bisa mengakses panel Translator maupun Compiler secara terpadu.
+
+### 2. Menggunakan Desktop GUI (Tkinter)
+Jika Anda menggunakan PC/Laptop dan menyukai tampilan native desktop klasik, cukup jalankan:
 ```bash
 python main.py
 ```
 
-### Run the Web Interface
-To launch the Flask web application in your browser (default: `http://127.0.0.1:5000`):
-```bash
-python main.py --web
-```
-
-### Run the Novel Compiler
-To compile your translated chapter text files into an EPUB e-book:
+### 3. Menjalankan Novel Compiler (Standalone Backup)
+Bila Anda hanya ingin menggabungkan `.txt` menjadi EPUB tanpa membuka fitur translasi, Anda bisa menjalankan *file* mandirinya:
 ```bash
 python "Novel Compiler.py"
 ```
