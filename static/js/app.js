@@ -147,12 +147,24 @@ document.addEventListener('DOMContentLoaded', function() {
                   alert('Recommended references were found. Review and edit them before adding to the references field.');
                 }
                 hideLoading();
-              }).catch(e=>{ alert('Result error: ' + (e.response?.data?.error||e.message)); });
+              }).catch(e=>{
+                alert('Result error: ' + (e.response?.data?.error||e.message));
+                hideLoading();
+              });
               translateBtn.disabled = false; if(cancelBtn) cancelBtn.disabled = true; currentJob = null;
             }
-          }).catch(()=>{});
+          }).catch(statusErr=>{
+            clearInterval(poll);
+            alert('Status error: ' + (statusErr.response?.data?.error || statusErr.message));
+            hideLoading();
+            translateBtn.disabled = false; if(cancelBtn) cancelBtn.disabled = true; currentJob = null;
+          });
         }, 1000);
-      }).catch(err=>{ alert('Error: ' + (err.response?.data?.error || err.message)); translateBtn.disabled = false; if(cancelBtn) cancelBtn.disabled = true; currentJob = null; });
+      }).catch(err=>{
+        alert('Error: ' + (err.response?.data?.error || err.message));
+        hideLoading();
+        translateBtn.disabled = false; if(cancelBtn) cancelBtn.disabled = true; currentJob = null;
+      });
     });
   }
 
