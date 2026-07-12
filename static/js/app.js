@@ -17,8 +17,8 @@ document.addEventListener('DOMContentLoaded', function() {
   const outputCharCount = document.getElementById('outputCharCount');
 
   // Helper function to deduplicate references
-  // Deduplicates using the right-hand side (after '->') as the key when available
-  // This treats lines with the same translated name (and any bracketed metadata) as duplicates
+  // Deduplicates using the left-hand side (before '->') as the key when available
+  // This treats lines with the same original name (and any bracketed metadata) as duplicates
   function deduplicateReferences(referencesText) {
     if (!referencesText || typeof referencesText !== 'string' || !referencesText.trim()) return '';
 
@@ -30,8 +30,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const deduped = [];
 
     for (const entry of entries) {
-      // Try to extract the translated part after '->'. If not present, use the whole line.
-      const arrowMatch = entry.match(/->\s*(.+)$/);
+      // Try to extract the part before '->'. If not present, use the whole line.
+      const arrowMatch = entry.match(/^(.+?)\s*->/);
       const keyPart = arrowMatch ? arrowMatch[1].trim() : entry;
 
       // Normalize comparison key (case-insensitive)
@@ -43,9 +43,9 @@ document.addEventListener('DOMContentLoaded', function() {
       }
     }
 
-    // Sort deduped entries by the RHS (after '->') to make duplicates/near-duplicates easier to spot
+    // Sort deduped entries by the LHS (before '->') to make duplicates/near-duplicates easier to spot
     const getSortKey = (line) => {
-      const m = line.match(/->\s*(.+)$/);
+      const m = line.match(/^(.+?)\s*->/);
       return (m ? m[1].trim().toLowerCase() : line.toLowerCase());
     };
 
@@ -102,6 +102,27 @@ document.addEventListener('DOMContentLoaded', function() {
   // Populate saved titles from server
   refreshSavedTitles();
   restoreConfig();
+
+  // Handle collapse state persistence for translation settings
+  const collapseEl = document.getElementById('translationSettingsCollapse');
+  if (collapseEl) {
+    const savedState = localStorage.getItem('translationSettingsCollapsed');
+    if (savedState === 'true') {
+      collapseEl.classList.remove('show');
+      const trigger = document.querySelector('[data-bs-target="#translationSettingsCollapse"]');
+      if (trigger) {
+        trigger.setAttribute('aria-expanded', 'false');
+        trigger.classList.add('collapsed');
+      }
+    }
+
+    collapseEl.addEventListener('hidden.bs.collapse', function () {
+      localStorage.setItem('translationSettingsCollapsed', 'true');
+    });
+    collapseEl.addEventListener('shown.bs.collapse', function () {
+      localStorage.setItem('translationSettingsCollapsed', 'false');
+    });
+  }
 
   // bind selection
   if(savedSelect) {

@@ -13,17 +13,22 @@ Rules:
 5) Treat the reference section as the only correct source for character names.
 6) Never rename, duplicate, or change characters already in the reference.
 7) Discard entries with '[Unknown]' tag
-8) After the translation, list ONLY newly introduced unique Named Characters, Monster/Species, Fantasy Skills, Fantasy Items, Organizations, and Places.
+8) After the translation, list ONLY newly introduced Important Characters, Monster/Species, Fantasy Skills, Fantasy Items, Organizations, and Places.
 9) Do not include terms already in the reference.
 10) Each new terminology should appear only once.
-11) Append the correct category tag in brackets "[]" based on the exact nature of the entity.
+11) Only use square brackets "[]" for character gender. Never use brackets for other tags.
 
 Output Format:
 - Full translated text
 - Then append:
 
 ---New Reference---
-- [Original Text] -> [Translated Name] [Gender/Monster/Species/Skill/Item/Place/Organization]
+- Original Text -> Translated Name [Gender]
+- Original Text -> Translated item
+- Original Text -> Translated skill
+- Original Text -> Translated place
+ 
+
 
 Constraints:
 - Plain text only

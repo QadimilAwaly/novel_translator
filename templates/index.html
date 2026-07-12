@@ -46,43 +46,58 @@
         </select>
       </div>
 
-      <!-- Language Selection -->
-      <div class="control-group">
-        <label class="control-label">
-          <span class="label-icon"><i class="fas fa-globe"></i></span>
-          Translate To
-        </label>
-        <select id="lang" class="control-select">
-          {% for k,v in languages.items() %}
-          <option value="{{k}}">{{k}}</option>
-          {% endfor %}
-        </select>
+      <!-- Toggle for Translation Options -->
+      <div class="control-group full-width">
+        <div class="collapse-toggle" data-bs-toggle="collapse" data-bs-target="#translationSettingsCollapse" aria-expanded="true" aria-controls="translationSettingsCollapse">
+          <span>
+            <span class="label-icon"><i class="fas fa-sliders-h"></i></span>
+            Translation Options
+          </span>
+          <i class="fas fa-chevron-down toggle-icon"></i>
+        </div>
       </div>
 
-      <!-- Model Selection -->
-      <div class="control-group">
-        <label class="control-label">
-          <span class="label-icon"><i class="fas fa-brain"></i></span>
-          AI Model
-        </label>
-        <select id="model" class="control-select">
-          <option>Loading...</option>
-        </select>
-      </div>
+      <!-- Collapsible Options -->
+      <div class="collapse show control-group full-width" id="translationSettingsCollapse">
+        <div class="collapsible-grid">
+          <!-- Language Selection -->
+          <div class="control-group">
+            <label class="control-label">
+              <span class="label-icon"><i class="fas fa-globe"></i></span>
+              Translate To
+            </label>
+            <select id="lang" class="control-select">
+              {% for k,v in languages.items() %}
+              <option value="{{k}}">{{k}}</option>
+              {% endfor %}
+            </select>
+          </div>
 
-      <!-- Prompt Selection -->
-      <div class="control-group">
-        <label class="control-label">
-          <span class="label-icon"><i class="fas fa-wand-magic-sparkles"></i></span>
-          Prompt Template
-        </label>
-        <select id="prompt" class="control-select">
-          {% for p in prompts %}
-          <option value="{{p}}">{{p}}</option>
-          {% endfor %}
-        </select>
-      </div>
+          <!-- Model Selection -->
+          <div class="control-group">
+            <label class="control-label">
+              <span class="label-icon"><i class="fas fa-brain"></i></span>
+              AI Model
+            </label>
+            <select id="model" class="control-select">
+              <option>Loading...</option>
+            </select>
+          </div>
 
+          <!-- Prompt Selection -->
+          <div class="control-group">
+            <label class="control-label">
+              <span class="label-icon"><i class="fas fa-wand-magic-sparkles"></i></span>
+              Prompt Template
+            </label>
+            <select id="prompt" class="control-select">
+              {% for p in prompts %}
+              <option value="{{p}}">{{p}}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+      </div>
       <!-- References Section - Spans full width on mobile -->
       <div class="control-group full-width">
         <label class="control-label">
