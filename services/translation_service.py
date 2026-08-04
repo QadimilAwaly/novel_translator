@@ -19,41 +19,90 @@ class TranslationService:
         if self._models_cache and (current_time - self._cache_time) < self.cache_duration:
             return self._models_cache
 
+        local_models = []
+        # Check for active running llama.cpp server model and add it dynamically
         try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models?key={self.api_key}"
-            req = urllib.request.Request(url, headers={'Content-Type': 'application/json'})
-            with urllib.request.urlopen(req, timeout=30) as response:
+            req = urllib.request.Request("http://127.0.0.1:8080/v1/models")
+            with urllib.request.urlopen(req, timeout=2) as response:
                 res = json.loads(response.read().decode('utf-8'))
-                
-            all_models = res.get('models', [])
-            available_models = [
-                m.get('name') for m in all_models
-                if "generateContent" in m.get("supportedGenerationMethods", []) and
-                   (m.get('name', '').startswith('models/gemini') or m.get('name', '').startswith('models/gemma'))
-            ]
-            # Order preference logic here
-            preferred = ['models/gemini-3.1-flash', 'models/gemini-3.1-flash-lite', 'models/gemini-2.5-flash', 'models/gemini-2.5-flash-lite']
-            preferred_order = [m for m in preferred if m in available_models]
-            remaining = sorted([m for m in available_models if m not in preferred_order])
-            
-            self._models_cache = preferred_order + remaining
-            self._cache_time = current_time
-            return self._models_cache
-        except urllib.error.HTTPError as e:
-            try:
-                error_content = json.loads(e.read().decode('utf-8'))
-                error_msg = error_content.get('error', {}).get('message', str(e))
-            except Exception:
-                error_msg = str(e)
-            raise RuntimeError(f"Failed to retrieve models: {error_msg}")
+                models_data = res.get('data', [])
+                if models_data:
+                    model_id = models_data[0].get('id')
+                    model_name = os.path.basename(model_id)
+                    model_label = f"local: {model_name}"
+                    if model_label not in local_models:
+                        local_models.append(model_label)
+        except Exception:
+            pass
+
+        gemini_models = []
+        try:
+            if self.api_key:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models?key={self.api_key}"
+                req = urllib.request.Request(url, headers={'Content-Type': 'application/json'})
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    res = json.loads(response.read().decode('utf-8'))
+                    
+                all_models = res.get('models', [])
+                available_models = [
+                    m.get('name') for m in all_models
+                    if "generateContent" in m.get("supportedGenerationMethods", []) and
+                       (m.get('name', '').startswith('models/gemini') or m.get('name', '').startswith('models/gemma'))
+                ]
+                # Order preference logic here
+                preferred = ['models/gemini-3.1-flash', 'models/gemini-3.1-flash-lite', 'models/gemini-2.5-flash', 'models/gemini-2.5-flash-lite']
+                preferred_order = [m for m in preferred if m in available_models]
+                remaining = sorted([m for m in available_models if m not in preferred_order])
+                gemini_models = preferred_order + remaining
         except Exception as e:
-            raise RuntimeError(f"Failed to retrieve models: {e}")
+            print(f"Skipping Gemini models fetch: {e}")
+            
+        self._models_cache = local_models + gemini_models
+        self._cache_time = current_time
+        return self._models_cache
 
     def translate_text(self, input_text, target_lang_name, selected_model_name, novel_references, cancel_flag, selected_prompt_file):
         if cancel_flag.is_set():
             return "", "Translation cancelled by user."
 
         try:
+            if selected_model_name.startswith("local:"):
+                base_url = "http://127.0.0.1:8080"
+                
+                reference_section = ""
+                if novel_references:
+                    reference_section = f"**Novel References:**\nUse the following references:\n---\n{novel_references}\n---"
+                
+                prompt = self._build_prompt(input_text, target_lang_name, reference_section, selected_prompt_file)
+                
+                payload = {
+                    "messages": [
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.3
+                }
+                
+                url = f"{base_url}/v1/chat/completions"
+                req = urllib.request.Request(
+                    url,
+                    data=json.dumps(payload).encode('utf-8'),
+                    headers={'Content-Type': 'application/json'},
+                    method='POST'
+                )
+                
+                with urllib.request.urlopen(req, timeout=300) as response:
+                    res_data = json.loads(response.read().decode('utf-8'))
+                    
+                if cancel_flag.is_set():
+                    return "", "Translation cancelled by user."
+                    
+                choices = res_data.get('choices', [])
+                if not choices:
+                    raise RuntimeError("No translation choices were returned by llama-server.")
+                text = choices[0].get('message', {}).get('content', '')
+                return self._parse_response(text)
+
+            # Gemini path
             if not selected_model_name.startswith('models/'):
                 selected_model_name = f"models/{selected_model_name}"
                 

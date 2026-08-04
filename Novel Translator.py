@@ -8,7 +8,8 @@ import threading
 import re
 import json
 import time
-
+import urllib.request
+import urllib.error
 # --- Configuration ---
 
 # Tentukan jalur ke file kunci API Anda
@@ -165,49 +166,102 @@ class TranslationService:
         self.cache_duration = 3600 # 1 hour
 
     def get_gemini_models(self):
-        """Fetches a list of available Gemini models, caching the result."""
+        """Fetches a list of available Gemini models and local models, caching the result."""
         current_time = time.time()
         if self._models_cache and (current_time - self._cache_time) < self.cache_duration:
             return self._models_cache
 
+        local_models = []
+        # Check for active running llama.cpp server model and add it dynamically
         try:
-            all_models = genai.list_models()
-            available_models = [
-                m.name for m in all_models
-                if "generateContent" in m.supported_generation_methods and
-                   (m.name.startswith('models/gemini') or m.name.startswith('models/gemma'))
-            ]
+            req = urllib.request.Request("http://127.0.0.1:8080/v1/models")
+            with urllib.request.urlopen(req, timeout=2) as response:
+                res = json.loads(response.read().decode('utf-8'))
+                models_data = res.get('data', [])
+                if models_data:
+                    model_id = models_data[0].get('id')
+                    model_name = os.path.basename(model_id)
+                    model_label = f"local: {model_name}"
+                    if model_label not in local_models:
+                        local_models.append(model_label)
+        except Exception:
+            pass
 
-            preferred_order = []
-            if 'models/gemini-1.5-flash' in available_models:
-                preferred_order.append('models/gemini-1.5-flash')
-            if 'models/gemini-2.5-flash' in available_models:
-                preferred_order.append('models/gemini-2.5-flash')
-            if 'models/gemini-2.0-flash' in available_models:
-                preferred_order.append('models/gemini-2.0-flash')
-            if 'models/gemini-2.5-pro' in available_models:
-                preferred_order.append('models/gemini-2.5-pro')
+        gemini_models = []
+        try:
+            if globals().get('GEMINI_API_KEY'):
+                all_models = genai.list_models()
+                available_models = [
+                    m.name for m in all_models
+                    if "generateContent" in m.supported_generation_methods and
+                       (m.name.startswith('models/gemini') or m.name.startswith('models/gemma'))
+                ]
 
-            remaining_models = sorted([m for m in available_models if m not in preferred_order])
-            final_models = preferred_order + remaining_models
+                preferred_order = []
+                if 'models/gemini-1.5-flash' in available_models:
+                    preferred_order.append('models/gemini-1.5-flash')
+                if 'models/gemini-2.5-flash' in available_models:
+                    preferred_order.append('models/gemini-2.5-flash')
+                if 'models/gemini-2.0-flash' in available_models:
+                    preferred_order.append('models/gemini-2.0-flash')
+                if 'models/gemini-2.5-pro' in available_models:
+                    preferred_order.append('models/gemini-2.5-pro')
 
-            self._models_cache = final_models
-            self._cache_time = current_time
-            return final_models
-
+                remaining_models = sorted([m for m in available_models if m not in preferred_order])
+                gemini_models = preferred_order + remaining_models
         except Exception as e:
-            raise RuntimeError(f"Failed to retrieve Gemini models: {e}. Please check your API key and internet connection.")
+            print(f"Skipping Gemini models fetch: {e}")
+
+        self._models_cache = local_models + gemini_models
+        self._cache_time = current_time
+        return self._models_cache
 
     def translate_text(self, input_text, target_lang_name, selected_model_name, novel_references, cancel_flag, selected_prompt_file):
-        """Performs the actual translation using the selected Gemini model."""
+        """Performs the actual translation using the selected Gemini model or local model."""
         if cancel_flag.is_set():
             return "", "Translation cancelled by user."
 
         try:
+            if selected_model_name.startswith("local:"):
+                base_url = "http://127.0.0.1:8080"
+                
+                reference_section = ""
+                if novel_references:
+                    reference_section = f"**Novel References:**\nUse the following references to ensure consistency in the translation.\n---\n{novel_references}\n---"
+                
+                prompt = self._build_translation_prompt(input_text, target_lang_name, reference_section, selected_prompt_file)
+                
+                payload = {
+                    "messages": [
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.3
+                }
+                
+                url = f"{base_url}/v1/chat/completions"
+                req = urllib.request.Request(
+                    url,
+                    data=json.dumps(payload).encode('utf-8'),
+                    headers={'Content-Type': 'application/json'},
+                    method='POST'
+                )
+                
+                with urllib.request.urlopen(req, timeout=300) as response:
+                    res_data = json.loads(response.read().decode('utf-8'))
+                    
+                if cancel_flag.is_set():
+                    return "", "Translation cancelled by user."
+                    
+                choices = res_data.get('choices', [])
+                if not choices:
+                    raise RuntimeError("No translation choices were returned by llama-server.")
+                text = choices[0].get('message', {}).get('content', '')
+                return self._parse_response(text)
+
+            # Gemini path
             model_instance = genai.GenerativeModel(selected_model_name)
             reference_section = ""
             if novel_references:
-                # Membuat format bagian referensi yang akan dimasukkan ke placeholder {reference_section} di prompt template.
                 reference_section = f"""
                 **Novel References:**
                 Use the following references to ensure consistency in the translation.
@@ -239,20 +293,17 @@ class TranslationService:
         except Exception as e:
             if cancel_flag.is_set():
                 return "", "Translation cancelled by user."
-            raise RuntimeError(f"Translation error: {e}. Please check your internet connection or if the input text is too long for the model's limits. Try a shorter chapter if the error persists. Also ensure your API key is correct or try a different model.")
+            raise RuntimeError(f"Translation error: {e}. Please check your connection or if the input text is too long. Also ensure your API key is correct or try a different model.")
 
     def _build_translation_prompt(self, input_text, target_lang_name, reference_section, selected_prompt_file):
         """Builds the translation prompt string by loading and formatting the selected template."""
         try:
-            # Load prompt template from selected file
             with open(selected_prompt_file, 'r', encoding='utf-8') as f:
                 prompt_template = f.read().strip()
         except Exception as e:
-            # Fallback to global template if file loading fails
             global TRANSLATION_PROMPT_TEMPLATE
             prompt_template = TRANSLATION_PROMPT_TEMPLATE
         
-        # Melakukan substitusi placeholder dalam template
         prompt = prompt_template.format(
             target_lang_name=target_lang_name,
             reference_section=reference_section,
@@ -272,7 +323,6 @@ class TranslationService:
 
         translation_part = re.sub(r'\n{3,}', '\n\n', translation_part.replace('\r\n', '\n').replace('\r', '\n')).strip()
         return translation_part, recommendation_part
-
 
 class ChapterInputDialog(tk.Toplevel):
     def __init__(self, parent, app_instance):

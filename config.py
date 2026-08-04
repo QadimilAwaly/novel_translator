@@ -17,7 +17,7 @@ class AppConfig:
     ]
     REFERENCES_DIR = os.path.join(BASE_DIR, "references")
     OUTPUT_DIR = os.path.join(BASE_DIR, "translated_novels")
-
+    MODELS_DIR = os.path.join(BASE_DIR, "models")
     RELEVANT_LANGUAGES = {
         "Korean": "ko", "Chinese (Simplified)": "zh", "Japanese": "ja",
         "English": "en", "French": "fr", "German": "de", "Spanish": "es",
@@ -28,7 +28,11 @@ class AppConfig:
     def __init__(self):
         self.api_key = self._load_api_key()
         self.default_prompt = self._load_default_prompt()
-
+        if not os.path.exists(self.MODELS_DIR):
+            try:
+                os.makedirs(self.MODELS_DIR, exist_ok=True)
+            except Exception:
+                pass
     def _load_api_key(self):
         env_key = os.getenv("GEMINI_API_KEY")
         if env_key:
