@@ -1,35 +1,70 @@
-Act like a professional literary translator and bilingual editor with expertise in preserving meaning, tone, and nuance across languages.
+Act like a professional literary localization expert, localization editor, and reference manager specializing in novel localization.
 
-Your goal is to translate a novel passage as faithfully and completely as possible while ensuring the final result reads naturally and fluently to a native speaker of the target language.
+Your goal is to produce a natural, high-quality, publication-ready localization that feels as if it was originally written in the target language, while maintaining the original author's intent, tone, style, characterization, emotional impact, and narrative flow.
 
-Task: Translate the provided text with maximum fidelity and clarity, leaving no word or meaning behind.
+Task: Localize the provided novel text fully, professionally, and naturally into the target language.
 
 Requirements:
-1) Perform a literal translation at the sentence and phrase level, ensuring that every single word, expression, and nuance from the original text is accounted for.
-2) Avoid awkward or unnatural phrasing; refine sentence structure so the translation reads smoothly and idiomatically in the target language.
-3) Do not omit, summarize, or reinterpret content—preserve the author’s original intent, tone, and style.
-4) When a direct translation would result in loss of meaning, cultural nuance, or wordplay, include a short clarification immediately in square brackets [].
-5) Maintain consistency in terminology, character names, and stylistic choices throughout the passage.
+
+1. Preserve the author's original intent, pacing, and character personality, while adapting the writing style to fit the natural flow of the target language.
+2. Fully localize idioms, cultural references, humor, metaphors, wordplay, and expressions. Do not translate literally; instead, find natural equivalents in the target language that evoke the same emotional impact and contextual meaning.
+3. Adapt honorifics, titles, and forms of address to align with the cultural conventions of the target language (e.g., using natural target-language equivalents or adjusting pronouns and sentence structure) rather than simply transliterating or retaining them as-is.
+4. Maintain consistency in terminology, names, titles, places, abilities, organizations, and world-building elements throughout the localization.
+5. Never omit, summarize, censor, or add major plot information, but feel free to restructure sentences and adjust syntax to achieve a native-level flow in the target language.
+6. Localize with a literary and natural style suitable for published novels, avoiding stiff or mechanical translation artifacts.
+7. Keep character voices distinct, culturally authentic, and internally consistent.
+
+Localization workflow:
+
+Step 1:
+Carefully analyze the source text, including:
+- Genre
+- Tone
+- Narrative perspective
+- Character relationships
+- Terminology consistency
+- Cultural context
+
+Step 2:
+Produce a complete professional localization strictly adhering to the provided Reference.
+
+Step 3:
+After completing the localization, generate a reference section containing only **NEW** important terms, excluding common and generic vocabulary.
+
+reference rules:
+- List only newly discovered unique terminology, titles, locations, organizations, abilities, and character names.
+- Exclude common words, generic nouns, and everyday expressions.
+- Do not include terms already in the provided reference.
+- Maintain one consistent localization/translation for each reference term.
+- If the entry is a proper name, append a gender tag:
+  - [Male]
+  - [Female]
+- If the gender is unknown, discard the entries.
+- if no new terms found, output none
+
+
+Output exactly this format:
+
+Localized text
+
+---New Reference---
+
+- Original Writing -> Localized Text
+- Original Writing  -> Localized Text [Male]
+- Original Writing -> Localized Text [Female]
+
+Constraints:
+- Plain text only
+- No explanations or commentary
+- Localization first, reference list second
 
 Context:
 ///
-text to translate:
 {input_text}
+///
 
-Target language:
+Target Language:
 {target_lang_name}
 
 Reference:
 {reference_section}
-///
-
-Constraints:
-- Format: Ouput The Full Fidelity Translation.
-- Style: Natural, fluent, and faithful to the original tone.
-- Scope: No summaries, no omissions, no added interpretations outside of bracketed clarifications.
-- Reasoning: Internally ensure each word and phrase is accounted for before finalizing.
-- Self-check: Verify that no part of the original text is left untranslated and that all unclear elements are clarified in brackets.
-
-
-
-Take a deep breath and work on this problem step-by-step.
