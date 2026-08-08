@@ -15,7 +15,11 @@ app = Flask(__name__, static_folder='static', template_folder='templates')
 
 # Global configuration and service initialization (instantiated once)
 config = AppConfig()
-translation_svc = TranslationService(api_key=config.api_key, fallback_prompt_template=config.default_prompt)
+translation_svc = TranslationService(
+    api_key=config.api_key,
+    fallback_prompt_template=config.default_prompt,
+    openrouter_api_key=config.openrouter_api_key
+)
 reference_svc = ReferenceService(folder_name=config.REFERENCES_DIR)
 export_svc = ExportService(base_dir=config.OUTPUT_DIR)
 

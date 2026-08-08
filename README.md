@@ -67,14 +67,14 @@ pip install -r requirements.txt
 ```
 *(Atau jalankan secara manual: `pip install flask ebooklib beautifulsoup4 lxml`)*
 
-### 2. Konfigurasi API Key
-Anda membutuhkan **Google Gemini API Key**. 
-Buat file teks bernama `api_key.txt` di dalam folder root aplikasi ini, lalu paste API Key Anda di dalamnya:
-```text
-AIzaSy...
+### 2. Konfigurasi API Key (.env)
+Anda membutuhkan **Google Gemini API Key** dan/atau **OpenRouter API Key**.
+Buat file bernama `.env` di dalam folder root aplikasi ini, lalu isi dengan format berikut:
+```env
+GEMINI_API_KEY=AIzaSy...
+OPENROUTER_API_KEY=sk-or-v1-...
 ```
-*(Alternatif: Anda juga bisa menyimpannya di variabel lingkungan OS / Environment Variables dengan nama `GEMINI_API_KEY`).*
-
+*(Catatan: Jika Anda sebelumnya menggunakan file `api_key.txt` dan `openrouter_key.txt`, aplikasi akan otomatis memigrasikannya ke dalam file `.env` dan menghapus file `.txt` lama tersebut pada saat dijalankan).*
 ---
 
 ## 💻 Cara Menjalankan Aplikasi

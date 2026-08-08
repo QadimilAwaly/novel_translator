@@ -43,6 +43,8 @@ class MainController:
         self.view.title_entry.bind("<Return>", self._on_title_change)
         self.view.title_dropdown.bind("<<ComboboxSelected>>", self._on_dropdown_select)
         self.view.ref_text.bind("<FocusOut>", self._on_ref_change)
+        self.view.model_combo.bind("<KeyRelease>", self._on_model_keyrelease)
+        self.view.model_combo.bind("<FocusIn>", self._on_model_focus_in)
 
     def _init_data(self):
         self._refresh_saved_titles()
@@ -64,11 +66,35 @@ class MainController:
             self.root.after(0, self.loading_indicator.hide)
 
     def _setup_models_combobox(self, models):
+        self.all_models = models if models else []
         if models:
             self.view.model_combo['values'] = models
             self.view.model_combo.set(models[0])
         else:
             self.view.model_combo.set("No models found")
+
+    def _on_model_keyrelease(self, event):
+        if event.keysym in ("Up", "Down", "Left", "Right", "Return", "Escape", "Tab"):
+            return
+            
+        typed = self.view.model_combo.get()
+        if not hasattr(self, 'all_models') or not self.all_models:
+            return
+            
+        if typed == "":
+            filtered = self.all_models
+        else:
+            filtered = [m for m in self.all_models if typed.lower() in m.lower()]
+            
+        self.view.model_combo['values'] = filtered
+        try:
+            self.view.model_combo.post()
+        except Exception:
+            pass
+
+    def _on_model_focus_in(self, event):
+        if hasattr(self, 'all_models') and self.all_models:
+            self.view.model_combo['values'] = self.all_models
 
     def _load_prompts(self):
         known_prompts = [

@@ -87,16 +87,41 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   // Load models
+  let allModels = [];
+  
+  function populateModels(modelsList) {
+    const currentSelection = modelSelect.value;
+    modelSelect.innerHTML = '';
+    modelsList.forEach(m => {
+      const o = document.createElement('option');
+      o.value = m;
+      o.textContent = m;
+      modelSelect.appendChild(o);
+    });
+    if (modelsList.includes(currentSelection)) {
+      modelSelect.value = currentSelection;
+    } else if (modelsList.length > 0) {
+      modelSelect.value = modelsList[0];
+    }
+  }
+
   if(modelSelect) {
     axios.get('/models').then(res => {
       if(res.data.models) {
-        modelSelect.innerHTML = '';
-        res.data.models.forEach(m => {
-          const o = document.createElement('option'); o.value = m; o.textContent = m; modelSelect.appendChild(o);
-        });
+        allModels = res.data.models;
+        populateModels(allModels);
         restoreConfig();
       }
     }).catch(()=>{ modelSelect.innerHTML = '<option>No models</option>'; });
+  }
+
+  const modelFilter = document.getElementById('modelFilter');
+  if(modelFilter && modelSelect) {
+    modelFilter.addEventListener('input', function() {
+      const query = modelFilter.value.toLowerCase().trim();
+      const filtered = allModels.filter(m => m.toLowerCase().includes(query));
+      populateModels(filtered);
+    });
   }
 
   // Populate saved titles from server

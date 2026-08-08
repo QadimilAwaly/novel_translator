@@ -7,8 +7,9 @@ import json
 import os
 
 class TranslationService:
-    def __init__(self, api_key, fallback_prompt_template):
+    def __init__(self, api_key, fallback_prompt_template, openrouter_api_key=None):
         self.api_key = api_key
+        self.openrouter_api_key = openrouter_api_key
         self.fallback_prompt_template = fallback_prompt_template
         self._models_cache = None
         self._cache_time = 0
@@ -57,7 +58,40 @@ class TranslationService:
         except Exception as e:
             print(f"Skipping Gemini models fetch: {e}")
             
-        self._models_cache = local_models + gemini_models
+        openrouter_models = []
+        try:
+            if self.openrouter_api_key:
+                url = "https://openrouter.ai/api/v1/models"
+                req = urllib.request.Request(
+                    url,
+                    headers={
+                        'Content-Type': 'application/json',
+                        'Authorization': f'Bearer {self.openrouter_api_key}'
+                    }
+                )
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    res = json.loads(response.read().decode('utf-8'))
+                
+                all_models = res.get('data', [])
+                available_models = [
+                    f"openrouter:{m.get('id')}" for m in all_models if m.get('id')
+                ]
+                preferred = [
+                    'openrouter:google/gemini-2.5-flash',
+                    'openrouter:google/gemini-2.5-pro',
+                    'openrouter:deepseek/deepseek-chat',
+                    'openrouter:anthropic/claude-3.5-sonnet',
+                    'openrouter:meta-llama/llama-3.1-405b-instruct',
+                    'openrouter:openai/gpt-4o-mini',
+                    'openrouter:openai/gpt-4o'
+                ]
+                preferred_order = [m for m in preferred if m in available_models]
+                remaining = sorted([m for m in available_models if m not in preferred_order])
+                openrouter_models = preferred_order + remaining
+        except Exception as e:
+            print(f"Skipping OpenRouter models fetch: {e}")
+
+        self._models_cache = local_models + gemini_models + openrouter_models
         self._cache_time = current_time
         return self._models_cache
 
@@ -99,6 +133,57 @@ class TranslationService:
                 choices = res_data.get('choices', [])
                 if not choices:
                     raise RuntimeError("No translation choices were returned by llama-server.")
+                text = choices[0].get('message', {}).get('content', '')
+                return self._parse_response(text)
+
+            if selected_model_name.startswith("openrouter:"):
+                real_model_name = selected_model_name.split("openrouter:", 1)[1].strip()
+                
+                reference_section = ""
+                if novel_references:
+                    reference_section = f"**Novel References:**\nUse the following references:\n---\n{novel_references}\n---"
+                
+                prompt = self._build_prompt(input_text, target_lang_name, reference_section, selected_prompt_file)
+                
+                payload = {
+                    "model": real_model_name,
+                    "messages": [
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.3
+                }
+                
+                url = "https://openrouter.ai/api/v1/chat/completions"
+                req = urllib.request.Request(
+                    url,
+                    data=json.dumps(payload).encode('utf-8'),
+                    headers={
+                        'Content-Type': 'application/json',
+                        'Authorization': f'Bearer {self.openrouter_api_key}',
+                        'HTTP-Referer': 'https://github.com/novel-translator',
+                        'X-Title': 'Novel Translator'
+                    },
+                    method='POST'
+                )
+                
+                try:
+                    with urllib.request.urlopen(req, timeout=300) as response:
+                        res_data = json.loads(response.read().decode('utf-8'))
+                except urllib.error.HTTPError as e:
+                    try:
+                        error_content = json.loads(e.read().decode('utf-8'))
+                        error_msg = error_content.get('error', {}).get('message', str(e))
+                    except Exception:
+                        error_msg = str(e)
+                    raise RuntimeError(error_msg)
+                    
+                if cancel_flag.is_set():
+                    return "", "Translation cancelled by user."
+                    
+                choices = res_data.get('choices', [])
+                if not choices:
+                    error_msg = res_data.get('error', {}).get('message', 'No translation choices were returned by OpenRouter.')
+                    raise RuntimeError(error_msg)
                 text = choices[0].get('message', {}).get('content', '')
                 return self._parse_response(text)
 

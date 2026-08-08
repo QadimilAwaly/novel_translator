@@ -42,7 +42,7 @@ class MainView(ttk.Frame):
         model_frame = ttk.Frame(self.top_frame)
         model_frame.pack(fill=tk.X, pady=(0, 10))
         ttk.Label(model_frame, text="Model:", width=15).pack(side=tk.LEFT)
-        self.model_combo = ttk.Combobox(model_frame, state="readonly")
+        self.model_combo = ttk.Combobox(model_frame, state="normal")
         self.model_combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         # 5. Prompt Block (Label beside Combobox)

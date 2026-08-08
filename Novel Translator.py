@@ -12,37 +12,112 @@ import urllib.request
 import urllib.error
 # --- Configuration ---
 
-# Tentukan jalur ke file kunci API Anda
-file_path = "api_key.txt"
+def load_and_migrate_env():
+    base_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
+    api_key_file = os.path.join(base_dir, "api_key.txt")
+    openrouter_key_file = os.path.join(base_dir, "openrouter_key.txt")
+    env_file = os.path.join(base_dir, ".env")
+    
+    # 1. Migration
+    gemini_key = None
+    or_key = None
+    
+    if os.path.exists(api_key_file):
+        try:
+            with open(api_key_file, 'r', encoding='utf-8') as f:
+                gemini_key = f.read().strip()
+        except Exception:
+            pass
+            
+    if os.path.exists(openrouter_key_file):
+        try:
+            with open(openrouter_key_file, 'r', encoding='utf-8') as f:
+                or_key = f.read().strip()
+        except Exception:
+            pass
+            
+    if gemini_key or or_key:
+        existing_env = {}
+        if os.path.exists(env_file):
+            try:
+                with open(env_file, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if '=' in line and not line.startswith('#'):
+                            k, v = line.split('=', 1)
+                            existing_env[k.strip()] = v.strip()
+            except Exception:
+                pass
+                
+        if gemini_key and "GEMINI_API_KEY" not in existing_env:
+            existing_env["GEMINI_API_KEY"] = gemini_key
+        if or_key and "OPENROUTER_API_KEY" not in existing_env:
+            existing_env["OPENROUTER_API_KEY"] = or_key
+            
+        try:
+            with open(env_file, 'w', encoding='utf-8') as f:
+                for k, v in existing_env.items():
+                    f.write(f"{k}={v}\n")
+            print("Successfully migrated API keys to .env file.")
+        except Exception as e:
+            print(f"Error writing .env file during migration: {e}")
+            
+        if gemini_key and os.path.exists(api_key_file):
+            try:
+                os.remove(api_key_file)
+            except Exception:
+                pass
+        if or_key and os.path.exists(openrouter_key_file):
+            try:
+                os.remove(openrouter_key_file)
+            except Exception:
+                pass
+
+    # 2. Load .env
+    if os.path.exists(env_file):
+        try:
+            with open(env_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    if '=' in line:
+                        key, val = line.split('=', 1)
+                        key = key.strip()
+                        val = val.strip()
+                        if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+                            val = val[1:-1]
+                        os.environ[key] = val
+        except Exception as e:
+            print(f"Error loading .env file: {e}")
+
+load_and_migrate_env()
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+
+if not GEMINI_API_KEY and not OPENROUTER_API_KEY:
+    print("Error: GEMINI_API_KEY or OPENROUTER_API_KEY not found in .env file or environment variables. At least one must be set.")
+    exit()
 
 # Tentukan jalur ke file prompt
 prompt_file_path = os.path.join("Prompt", "translation_prompt_1.txt")
 
-# Cek apakah file ada sebelum mencoba membacanya
-if not os.path.exists(file_path):
-    print(f"Error: File '{file_path}' tidak ditemukan.")
-    exit()
-
-#Cek dan muat file prompt
+# Cek dan muat file prompt
 if not os.path.exists(prompt_file_path):
     print(f"Error: File '{prompt_file_path}' tidak ditemukan.")
     exit()
 
 try:
-    # Buka file dalam mode baca ('r') dengan encoding 'utf-8'
-    with open(file_path, 'r', encoding='utf-8') as f:
-        GEMINI_API_KEY = f.read().strip()
-    
     #Muat template prompt
     with open(prompt_file_path, 'r', encoding='utf-8') as f:
         TRANSLATION_PROMPT_TEMPLATE = f.read().strip()
-    
 except Exception as e:
-    print(f"Error reading configuration file: {e}")
+    print(f"Error reading prompt template file: {e}")
     exit()
 
-genai.configure(api_key=GEMINI_API_KEY)
-
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 # Define Language Mappings (only relevant for output language now)
 RELEVANT_LANGUAGES = {
     "Korean": "ko", "Chinese (Simplified)": "zh", "Japanese": "ja",
@@ -212,7 +287,41 @@ class TranslationService:
         except Exception as e:
             print(f"Skipping Gemini models fetch: {e}")
 
-        self._models_cache = local_models + gemini_models
+        openrouter_models = []
+        try:
+            openrouter_api_key = globals().get('OPENROUTER_API_KEY')
+            if openrouter_api_key:
+                url = "https://openrouter.ai/api/v1/models"
+                req = urllib.request.Request(
+                    url,
+                    headers={
+                        'Content-Type': 'application/json',
+                        'Authorization': f'Bearer {openrouter_api_key}'
+                    }
+                )
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    res = json.loads(response.read().decode('utf-8'))
+                
+                all_models = res.get('data', [])
+                available_models = [
+                    f"openrouter:{m.get('id')}" for m in all_models if m.get('id')
+                ]
+                preferred = [
+                    'openrouter:google/gemini-2.5-flash',
+                    'openrouter:google/gemini-2.5-pro',
+                    'openrouter:deepseek/deepseek-chat',
+                    'openrouter:anthropic/claude-3.5-sonnet',
+                    'openrouter:meta-llama/llama-3.1-405b-instruct',
+                    'openrouter:openai/gpt-4o-mini',
+                    'openrouter:openai/gpt-4o'
+                ]
+                preferred_order = [m for m in preferred if m in available_models]
+                remaining = sorted([m for m in available_models if m not in preferred_order])
+                openrouter_models = preferred_order + remaining
+        except Exception as e:
+            print(f"Skipping OpenRouter models fetch: {e}")
+
+        self._models_cache = local_models + gemini_models + openrouter_models
         self._cache_time = current_time
         return self._models_cache
 
@@ -255,6 +364,58 @@ class TranslationService:
                 choices = res_data.get('choices', [])
                 if not choices:
                     raise RuntimeError("No translation choices were returned by llama-server.")
+                text = choices[0].get('message', {}).get('content', '')
+                return self._parse_response(text)
+
+            if selected_model_name.startswith("openrouter:"):
+                openrouter_api_key = globals().get('OPENROUTER_API_KEY')
+                real_model_name = selected_model_name.split("openrouter:", 1)[1].strip()
+                
+                reference_section = ""
+                if novel_references:
+                    reference_section = f"**Novel References:**\nUse the following references to ensure consistency in the translation.\n---\n{novel_references}\n---"
+                
+                prompt = self._build_translation_prompt(input_text, target_lang_name, reference_section, selected_prompt_file)
+                
+                payload = {
+                    "model": real_model_name,
+                    "messages": [
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.3
+                }
+                
+                url = "https://openrouter.ai/api/v1/chat/completions"
+                req = urllib.request.Request(
+                    url,
+                    data=json.dumps(payload).encode('utf-8'),
+                    headers={
+                        'Content-Type': 'application/json',
+                        'Authorization': f'Bearer {openrouter_api_key}',
+                        'HTTP-Referer': 'https://github.com/novel-translator',
+                        'X-Title': 'Novel Translator'
+                    },
+                    method='POST'
+                )
+                
+                try:
+                    with urllib.request.urlopen(req, timeout=300) as response:
+                        res_data = json.loads(response.read().decode('utf-8'))
+                except urllib.error.HTTPError as e:
+                    try:
+                        error_content = json.loads(e.read().decode('utf-8'))
+                        error_msg = error_content.get('error', {}).get('message', str(e))
+                    except Exception:
+                        error_msg = str(e)
+                    raise RuntimeError(error_msg)
+                    
+                if cancel_flag.is_set():
+                    return "", "Translation cancelled by user."
+                    
+                choices = res_data.get('choices', [])
+                if not choices:
+                    error_msg = res_data.get('error', {}).get('message', 'No translation choices were returned by OpenRouter.')
+                    raise RuntimeError(error_msg)
                 text = choices[0].get('message', {}).get('content', '')
                 return self._parse_response(text)
 
@@ -438,8 +599,10 @@ class NovelTranslatorApp:
         model_selection_frame = ttk.Frame(lang_model_frame)
         model_selection_frame.pack(anchor=tk.W, pady=(0, 5))
         ttk.Label(model_selection_frame, text="Select Model:").pack(side=tk.LEFT, padx=(0, 5))
-        self.model_combobox = ttk.Combobox(model_selection_frame, values=[], state="readonly", width=30)
+        self.model_combobox = ttk.Combobox(model_selection_frame, values=[], state="normal", width=30)
         self.model_combobox.pack(side=tk.LEFT)
+        self.model_combobox.bind("<KeyRelease>", self._on_model_keyrelease)
+        self.model_combobox.bind("<FocusIn>", self._on_model_focus_in)
         
         prompt_selection_frame = ttk.Frame(lang_model_frame)
         prompt_selection_frame.pack(anchor=tk.W, pady=(0, 5))
@@ -909,7 +1072,7 @@ class NovelTranslatorApp:
         self.translate_button.config(state=tk.DISABLED if is_translating else tk.NORMAL)
         self.save_output_button.config(state=tk.DISABLED if is_translating else tk.NORMAL)
         self.virtual_keyboard_button.config(state=tk.DISABLED if is_translating else tk.NORMAL)
-        self.model_combobox.config(state=tk.DISABLED if is_translating else "readonly")
+        self.model_combobox.config(state=tk.DISABLED if is_translating else "normal")
         self.output_language_combobox.config(state=tk.DISABLED if is_translating else "readonly")
         self.prompt_combobox.config(state=tk.DISABLED if is_translating else "readonly")
 
@@ -950,15 +1113,39 @@ class NovelTranslatorApp:
             self.root.after(0, self.loading_indicator.hide)
 
     def _set_model_combobox(self, available_gemini_models):
+        self.all_models = available_gemini_models if available_gemini_models else []
         if available_gemini_models:
             self.model_combobox['values'] = available_gemini_models
             selected_model = next((m for m in available_gemini_models if 'gemini-3.1-flash-lite-preview' in m),
                                   available_gemini_models[0])
             self.model_combobox.set(selected_model)
-            self.model_combobox.config(state="readonly")
+            self.model_combobox.config(state="normal")
         else:
             self.model_combobox.set("No models found")
             self.model_combobox.config(state="disabled")
+
+    def _on_model_keyrelease(self, event):
+        if event.keysym in ("Up", "Down", "Left", "Right", "Return", "Escape", "Tab"):
+            return
+            
+        typed = self.model_combobox.get()
+        if not hasattr(self, 'all_models') or not self.all_models:
+            return
+            
+        if typed == "":
+            filtered = self.all_models
+        else:
+            filtered = [m for m in self.all_models if typed.lower() in m.lower()]
+            
+        self.model_combobox['values'] = filtered
+        try:
+            self.model_combobox.post()
+        except Exception:
+            pass
+
+    def _on_model_focus_in(self, event):
+        if hasattr(self, 'all_models') and self.all_models:
+            self.model_combobox['values'] = self.all_models
 
     def _populate_prompt_combobox(self):
         """Populate the prompt combobox with available prompt files."""

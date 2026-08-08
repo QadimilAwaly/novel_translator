@@ -15,7 +15,11 @@ def run_gui():
     root = tk.Tk()
     root.title("Novel Translator")
     config = AppConfig()
-    translation_svc = TranslationService(config.api_key, config.default_prompt)
+    translation_svc = TranslationService(
+        api_key=config.api_key,
+        fallback_prompt_template=config.default_prompt,
+        openrouter_api_key=config.openrouter_api_key
+    )
     reference_svc = ReferenceService(config.REFERENCES_DIR)
     export_svc = ExportService(config.OUTPUT_DIR)
     view = MainView(root, config.RELEVANT_LANGUAGES)

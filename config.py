@@ -4,6 +4,7 @@ import os
 class AppConfig:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     API_KEY_FILE = os.path.join(BASE_DIR, "api_key.txt")
+    OPENROUTER_KEY_FILE = os.path.join(BASE_DIR, "openrouter_key.txt")
     PROMPT_DIR = os.path.join(BASE_DIR, "Prompt")
     DEFAULT_PROMPT_FILE_NAME = "translation_prompt_5.txt"
     DEFAULT_PROMPT_FILE = os.path.join(PROMPT_DIR, DEFAULT_PROMPT_FILE_NAME)
@@ -26,21 +27,97 @@ class AppConfig:
     }
 
     def __init__(self):
-        self.api_key = self._load_api_key()
+        self._migrate_keys_to_env()
+        self._load_env_file()
+        self.api_key = os.getenv("GEMINI_API_KEY")
+        self.openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
+        if not self.api_key and not self.openrouter_api_key:
+            raise FileNotFoundError(
+                "Neither GEMINI_API_KEY nor OPENROUTER_API_KEY was found in .env file or environment variables. At least one must be set."
+            )
         self.default_prompt = self._load_default_prompt()
         if not os.path.exists(self.MODELS_DIR):
             try:
                 os.makedirs(self.MODELS_DIR, exist_ok=True)
             except Exception:
                 pass
-    def _load_api_key(self):
-        env_key = os.getenv("GEMINI_API_KEY")
-        if env_key:
-            return env_key.strip()
-        if not os.path.exists(self.API_KEY_FILE):
-            raise FileNotFoundError(f"API key file '{self.API_KEY_FILE}' not found.")
-        with open(self.API_KEY_FILE, 'r', encoding='utf-8') as f:
-            return f.read().strip()
+
+    def _migrate_keys_to_env(self):
+        env_file = os.path.join(self.BASE_DIR, ".env")
+        gemini_key = None
+        or_key = None
+        
+        if os.path.exists(self.API_KEY_FILE):
+            try:
+                with open(self.API_KEY_FILE, 'r', encoding='utf-8') as f:
+                    gemini_key = f.read().strip()
+            except Exception:
+                pass
+                
+        if os.path.exists(self.OPENROUTER_KEY_FILE):
+            try:
+                with open(self.OPENROUTER_KEY_FILE, 'r', encoding='utf-8') as f:
+                    or_key = f.read().strip()
+            except Exception:
+                pass
+        
+        if gemini_key or or_key:
+            existing_env = {}
+            if os.path.exists(env_file):
+                try:
+                    with open(env_file, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            line = line.strip()
+                            if '=' in line and not line.startswith('#'):
+                                k, v = line.split('=', 1)
+                                existing_env[k.strip()] = v.strip()
+                except Exception:
+                    pass
+            
+            if gemini_key and "GEMINI_API_KEY" not in existing_env:
+                existing_env["GEMINI_API_KEY"] = gemini_key
+            if or_key and "OPENROUTER_API_KEY" not in existing_env:
+                existing_env["OPENROUTER_API_KEY"] = or_key
+                
+            try:
+                with open(env_file, 'w', encoding='utf-8') as f:
+                    for k, v in existing_env.items():
+                        f.write(f"{k}={v}\n")
+                print("Successfully migrated API keys to .env file.")
+            except Exception as e:
+                print(f"Error writing .env file during migration: {e}")
+                
+            if gemini_key and os.path.exists(self.API_KEY_FILE):
+                try:
+                    os.remove(self.API_KEY_FILE)
+                except Exception:
+                    pass
+                    
+            if or_key and os.path.exists(self.OPENROUTER_KEY_FILE):
+                try:
+                    os.remove(self.OPENROUTER_KEY_FILE)
+                except Exception:
+                    pass
+
+    def _load_env_file(self):
+        env_file = os.path.join(self.BASE_DIR, ".env")
+        if not os.path.exists(env_file):
+            return
+        try:
+            with open(env_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    if '=' in line:
+                        key, val = line.split('=', 1)
+                        key = key.strip()
+                        val = val.strip()
+                        if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+                            val = val[1:-1]
+                        os.environ[key] = val
+        except Exception as e:
+            print(f"Error loading .env file: {e}")
 
     def _load_default_prompt(self):
         if not os.path.exists(self.DEFAULT_PROMPT_FILE):
