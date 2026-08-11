@@ -58,10 +58,16 @@ class ReferenceService:
             match = re.search(r'-\s*(?:[^:]+:\s*)?(.+?)\s*->', line)
             if match:
                 original_text = match.group(1).strip()
-                # Check if the original text appears in the input
-                if original_text in input_text:
-                    filtered_lines.append(line)
-        
+                if not original_text:
+                    continue
+                # If term is purely ASCII/alphanumeric, use word boundary to avoid false positives (e.g. 'Al' in 'Always')
+                if original_text.isascii() and original_text.isalnum():
+                    pattern = r'\b' + re.escape(original_text) + r'\b'
+                    if re.search(pattern, input_text, re.IGNORECASE):
+                        filtered_lines.append(line)
+                else:
+                    if original_text in input_text:
+                        filtered_lines.append(line)
         return '\n'.join(filtered_lines) if filtered_lines else ""
 
     def save_references(self, novel_title, references_text):

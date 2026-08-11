@@ -15,7 +15,51 @@ document.addEventListener('DOMContentLoaded', function() {
   const loadingText = document.getElementById('loadingText');
   const inputCharCount = document.getElementById('inputCharCount');
   const outputCharCount = document.getElementById('outputCharCount');
+  // --- Toast Notification Helper ---
+  function showToast(message, type = 'info') {
+    const container = document.getElementById('toastContainer');
+    if (!container) {
+      alert(message);
+      return;
+    }
+    const bgMap = {
+      success: 'text-bg-success',
+      danger: 'text-bg-danger',
+      warning: 'text-bg-warning',
+      info: 'text-bg-info'
+    };
+    const iconMap = {
+      success: 'fa-check-circle',
+      danger: 'fa-exclamation-circle',
+      warning: 'fa-exclamation-triangle',
+      info: 'fa-info-circle'
+    };
+    const toastId = 'toast_' + Date.now();
+    const toastHtml = `
+      <div id="${toastId}" class="toast align-items-center ${bgMap[type] || 'text-bg-info'} border-0" role="alert" aria-live="assertive" aria-atomic="true">
+        <div class="d-flex">
+          <div class="toast-body d-flex align-items-center">
+            <i class="fas ${iconMap[type] || 'fa-info-circle'} me-2 fs-5"></i>
+            <span>${message}</span>
+          </div>
+          <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+        </div>
+      </div>
+    `;
+    container.insertAdjacentHTML('beforeend', toastHtml);
+    const toastEl = document.getElementById(toastId);
+    if (window.bootstrap && window.bootstrap.Toast) {
+      const bsToast = new bootstrap.Toast(toastEl, { delay: 4000 });
+      bsToast.show();
+    }
+    toastEl.addEventListener('hidden.bs.toast', () => toastEl.remove());
+  }
 
+  // Initialize Bootstrap tooltips
+  if (window.bootstrap && window.bootstrap.Tooltip) {
+    const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+    [...tooltipTriggerList].forEach(tooltipTriggerEl => new bootstrap.Tooltip(tooltipTriggerEl));
+  }
   // Helper function to deduplicate references
   // Deduplicates using the left-hand side (before '->') as the key when available
   // This treats lines with the same original name (and any bracketed metadata) as duplicates
@@ -167,16 +211,27 @@ document.addEventListener('DOMContentLoaded', function() {
   if(translateBtn) {
     translateBtn.addEventListener('click', ()=>{
       if(currentJob) return;
+      const title = titleInput ? titleInput.value.trim() : '';
+      const input = inputArea ? inputArea.value.trim() : '';
+      if(!title){
+        showToast('Please enter a novel title before translating.', 'warning');
+        return;
+      }
+      if(!input){
+        showToast('Please paste source text before translating.', 'warning');
+        return;
+      }
+
       translateBtn.disabled = true; if(cancelBtn) cancelBtn.disabled = false;
       const payload = {
-        title: titleInput ? titleInput.value : '',
-        input_text: inputArea ? inputArea.value : '',
+        title: title,
+        input_text: input,
         target_lang: document.getElementById('lang') ? document.getElementById('lang').value : '',
         model: modelSelect ? modelSelect.value : '',
         references: refsArea ? refsArea.value : '',
         prompt_file: document.getElementById('prompt') ? document.getElementById('prompt').value : ''
       };
-      showLoading('Translating...');
+      showLoading('Translating novel chapter...');
       axios.post('/translate_async', payload).then(res=>{
         const jobId = res.data.job_id;
         currentJob = jobId;
@@ -186,28 +241,36 @@ document.addEventListener('DOMContentLoaded', function() {
             if(status === 'completed' || status === 'cancelled' || status === 'error'){
               clearInterval(poll);
               axios.get(`/translate_result/${jobId}`).then(r=>{
-                if(r.data.translated && outputArea) outputArea.value = r.data.translated;
+                if(r.data.translated && outputArea) {
+                  outputArea.value = r.data.translated;
+                  updateCharCounts();
+                }
                 const recs = r.data.recommendations || '';
                 if(recommendationsArea) recommendationsArea.value = recs;
-                if(recs.trim()){
-                  alert('Recommended references were found. Review and edit them before adding to the references field.');
+                if(status === 'completed'){
+                  showToast('Translation completed successfully!', 'success');
+                  if(recs.trim()){
+                    showToast('AI recommendations available below for review.', 'info');
+                  }
+                } else if(status === 'cancelled'){
+                  showToast('Translation was cancelled.', 'warning');
                 }
                 hideLoading();
               }).catch(e=>{
-                alert('Result error: ' + (e.response?.data?.error||e.message));
+                showToast('Result error: ' + (e.response?.data?.error || e.message), 'danger');
                 hideLoading();
               });
               translateBtn.disabled = false; if(cancelBtn) cancelBtn.disabled = true; currentJob = null;
             }
           }).catch(statusErr=>{
             clearInterval(poll);
-            alert('Status error: ' + (statusErr.response?.data?.error || statusErr.message));
+            showToast('Status error: ' + (statusErr.response?.data?.error || statusErr.message), 'danger');
             hideLoading();
             translateBtn.disabled = false; if(cancelBtn) cancelBtn.disabled = true; currentJob = null;
           });
         }, 1000);
       }).catch(err=>{
-        alert('Error: ' + (err.response?.data?.error || err.message));
+        showToast('Translation error: ' + (err.response?.data?.error || err.message), 'danger');
         hideLoading();
         translateBtn.disabled = false; if(cancelBtn) cancelBtn.disabled = true; currentJob = null;
       });
@@ -239,16 +302,16 @@ document.addEventListener('DOMContentLoaded', function() {
     if(!titleInput) return;
     const title = titleInput.value.trim();
     if(!title) {
-      alert('Please enter a title before saving recommendations.');
+      showToast('Please enter a title before saving recommendations.', 'warning');
       return;
     }
     const existing = refsArea ? refsArea.value.trim() : '';
     const combined = existing ? `${existing}\n${recommendedText.trim()}` : recommendedText.trim();
     const dedupedCombined = deduplicateReferences(combined);
     if(refsArea) refsArea.value = dedupedCombined;
-    if(recommendationsArea) recommendationsArea.value = ''; // Clear recommendations box after successful addition
+    if(recommendationsArea) recommendationsArea.value = '';
     saveRefsIfTitle(dedupedCombined);
-    alert('Recommended references saved and duplicates removed.');
+    showToast('Recommended references saved and merged.', 'success');
   };
 
   if(titleInput) {
@@ -268,12 +331,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
   if(applyRecommendationBtn) {
     applyRecommendationBtn.addEventListener('click', (e)=>{
-      e.preventDefault(); // Prevents page reload if button accidentally acts as a form submit
+      e.preventDefault();
       if(!recommendationsArea || !refsArea) return;
       
       const recommendationText = recommendationsArea.value.trim();
       if(!recommendationText){
-        alert('No recommendation text available to add.');
+        showToast('No recommendation text available to add.', 'warning');
         return;
       }
       
@@ -282,10 +345,83 @@ document.addEventListener('DOMContentLoaded', function() {
       const dedupedRefs = deduplicateReferences(newRefs);
       
       refsArea.value = dedupedRefs;
-      recommendationsArea.value = ''; // Clear out applied recommendations to provide feedback it successfully worked
+      recommendationsArea.value = '';
       
       saveRefsIfTitle(dedupedRefs);
-      alert('Recommendation text has been merged into novel references. Duplicates have been removed.');
+      showToast('Recommendations merged into references.', 'success');
+    });
+  }
+
+  // Save chapter
+  // Source & Output Quick Controls
+  const clearInputBtn = document.getElementById('clearInputBtn');
+  if (clearInputBtn && inputArea) {
+    clearInputBtn.addEventListener('click', () => {
+      inputArea.value = '';
+      updateCharCounts();
+      showToast('Source text cleared', 'info');
+    });
+  }
+
+  const copyOutputBtn = document.getElementById('copyOutputBtn');
+  if (copyOutputBtn && outputArea) {
+    copyOutputBtn.addEventListener('click', () => {
+      if (!outputArea.value.trim()) {
+        showToast('No translated text to copy', 'warning');
+        return;
+      }
+      navigator.clipboard.writeText(outputArea.value).then(() => {
+        showToast('Translated text copied to clipboard', 'success');
+      }).catch(() => {
+        showToast('Failed to copy text', 'danger');
+      });
+    });
+  }
+
+  const swapTextBtn = document.getElementById('swapTextBtn');
+  if (swapTextBtn && inputArea && outputArea) {
+    swapTextBtn.addEventListener('click', () => {
+      if (!outputArea.value.trim()) {
+        showToast('Output is empty', 'warning');
+        return;
+      }
+      inputArea.value = outputArea.value;
+      outputArea.value = '';
+      updateCharCounts();
+      showToast('Output moved to Source input', 'info');
+    });
+  }
+
+  const clearRecommendationBtn = document.getElementById('clearRecommendationBtn');
+  if (clearRecommendationBtn && recommendationsArea) {
+    clearRecommendationBtn.addEventListener('click', () => {
+      recommendationsArea.value = '';
+      showToast('Recommendations cleared', 'info');
+    });
+  }
+
+  const resetAllBtn = document.getElementById('resetAllBtn');
+  if (resetAllBtn) {
+    resetAllBtn.addEventListener('click', () => {
+      if (inputArea) inputArea.value = '';
+      if (outputArea) outputArea.value = '';
+      if (recommendationsArea) recommendationsArea.value = '';
+      if (refsArea) refsArea.value = '';
+      if (titleInput) titleInput.value = '';
+      if (savedSelect) savedSelect.value = '';
+      updateCharCounts();
+      showToast('All fields reset', 'info');
+    });
+  }
+
+  if (inputArea) {
+    inputArea.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        if (translateBtn && !translateBtn.disabled) {
+          translateBtn.click();
+        }
+      }
     });
   }
 
@@ -294,13 +430,16 @@ document.addEventListener('DOMContentLoaded', function() {
     saveBtn.addEventListener('click', ()=>{
       const title = titleInput ? titleInput.value.trim() : '';
       const content = outputArea ? outputArea.value : '';
-      if(!title || !content){ alert('Title and translated content are required to save.'); return; }
+      if(!title || !content){
+        showToast('Title and translated content are required to save.', 'warning');
+        return;
+      }
 
       const doSave = (chapter, overwrite=false) => {
         axios.post('/save_chapter', {title: title, chapter: chapter, content: content, overwrite: overwrite})
           .then(res=>{
-            if(res.data.path) alert('Saved: ' + res.data.path);
-            else alert('Saved.');
+            if(res.data.path) showToast('Chapter saved successfully: ' + res.data.path, 'success');
+            else showToast('Chapter saved successfully.', 'success');
             refreshSavedTitles();
           })
           .catch(err=>{
@@ -309,7 +448,7 @@ document.addEventListener('DOMContentLoaded', function() {
               if(confirmOverwrite) doSave(chapter, true);
               return;
             }
-            alert('Save failed: ' + (err.response?.data?.error || err.message));
+            showToast('Save failed: ' + (err.response?.data?.error || err.message), 'danger');
           });
       };
 

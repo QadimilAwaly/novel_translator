@@ -94,15 +94,17 @@ def translate():
     if not input_text or not title:
         return jsonify({'error': 'Title and input_text are required'}), 400
 
+    if len(input_text) > 500000:
+        return jsonify({'error': 'Input text exceeds the maximum allowed limit of 500,000 characters'}), 400
+
     # Auto-save references
     try:
         reference_svc.save_references(title, refs)
     except Exception:
         pass
 
-    # Filter references based on input text to minimize token usage
-    filtered_refs = reference_svc.load_references(title, input_text)
-
+    # Filter references based on input text directly in-memory to minimize disk IO
+    filtered_refs = reference_svc._filter_references(refs, input_text)
     # synchronous fallback (keeps compatibility)
     cancel_flag = threading.Event()
     try:
@@ -129,15 +131,17 @@ def translate_async():
     if not input_text or not title:
         return jsonify({'error': 'Title and input_text are required'}), 400
 
+    if len(input_text) > 500000:
+        return jsonify({'error': 'Input text exceeds the maximum allowed limit of 500,000 characters'}), 400
+
     # Auto-save references
     try:
         reference_svc.save_references(title, refs)
     except Exception:
         pass
 
-    # Filter references based on input text to minimize token usage
-    filtered_refs = reference_svc.load_references(title, input_text)
-
+    # Filter references based on input text directly in-memory to minimize disk IO
+    filtered_refs = reference_svc._filter_references(refs, input_text)
     job_id = str(uuid.uuid4())
     cancel_event = threading.Event()
 
@@ -343,12 +347,12 @@ def compiler_compile():
         
 @app.route('/compiler/download/<filename>')
 def compiler_download(filename):
-    output_dir = os.path.join(os.getcwd(), "Compiled Novel")
+    output_dir = os.path.abspath(os.path.join(os.getcwd(), "Compiled Novel"))
     safe_filename = os.path.basename(filename)
-    file_path = os.path.join(output_dir, safe_filename)
+    file_path = os.path.abspath(os.path.join(output_dir, safe_filename))
     
-    if not os.path.exists(file_path):
-        return "File not found", 404
+    if not file_path.startswith(output_dir) or not os.path.exists(file_path):
+        return jsonify({'error': 'File not found'}), 404
         
     return send_file(file_path, as_attachment=True, mimetype='application/epub+zip')
 

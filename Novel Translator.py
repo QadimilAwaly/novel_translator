@@ -1,5 +1,9 @@
 #!/usr/bin/env python3 --no-sandbox
 
+
+
+######## KODE INI HANYA PAJANGAN, PENGABADIA PROTOTYPE. BUKAN UNTUK DIGUNAKAN. SILAHKAN ABAIKAN##########
+
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox, simpledialog
 import google.generativeai as genai

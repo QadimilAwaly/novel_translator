@@ -104,8 +104,9 @@
         <label class="control-label">
           <span class="label-icon"><i class="fas fa-book"></i></span>
           Novel References
+          <i class="fas fa-info-circle text-muted ms-1" data-bs-toggle="tooltip" title="Add term mappings in format: - Original -> Translation [tag]"></i>
         </label>
-        <textarea id="refs" class="control-textarea" rows="5" placeholder="Add references here (context, character names, terms, etc.)"></textarea>
+        <textarea id="refs" class="control-textarea" rows="5" placeholder="Add references here e.g. - Kim Dokja -> Kim Dokja [name]"></textarea>
       </div>
 
       <!-- AI Recommendations Section -->
@@ -113,25 +114,34 @@
         <label class="control-label">
           <span class="label-icon"><i class="fas fa-sparkles"></i></span>
           AI Recommendations
+          <i class="fas fa-info-circle text-muted ms-1" data-bs-toggle="tooltip" title="Suggested character names or terms from the translation output"></i>
         </label>
-        <textarea id="recommendations" class="control-textarea" rows="4" placeholder="AI reference recommendations will appear here..."></textarea>
-        <div class="recommendation-hint">Review and adjust recommended reference text.</div>
-        <button id="applyRecommendationBtn" class="btn-secondary-action">
-          <i class="fas fa-check me-2"></i>Add Recommendations
-        </button>
+        <textarea id="recommendations" class="control-textarea" rows="3" placeholder="AI reference recommendations will appear here..."></textarea>
+        <div class="recommendation-hint mb-2">Review and adjust recommended reference text.</div>
+        <div class="d-flex gap-2">
+          <button id="applyRecommendationBtn" class="btn-secondary-action">
+            <i class="fas fa-check me-2"></i>Add Recommendations
+          </button>
+          <button id="clearRecommendationBtn" class="btn btn-sm btn-outline-secondary">
+            <i class="fas fa-trash-alt me-1"></i>Clear
+          </button>
+        </div>
       </div>
     </div>
 
     <!-- Action Buttons -->
     <div class="control-actions">
-      <button id="translateBtn" class="btn-primary-action">
+      <button id="translateBtn" class="btn-primary-action" title="Translate source text (Ctrl+Enter)">
         <i class="fas fa-language me-2"></i>Translate
       </button>
       <button id="cancelBtn" class="btn-danger-action" disabled>
         <i class="fas fa-ban me-2"></i>Cancel
       </button>
       <button id="saveBtn" class="btn-secondary-action">
-        <i class="fas fa-save me-2"></i>Save
+        <i class="fas fa-save me-2"></i>Save Chapter
+      </button>
+      <button id="resetAllBtn" class="btn btn-outline-warning btn-sm ms-auto" title="Reset fields">
+        <i class="fas fa-undo me-1"></i>Reset
       </button>
     </div>
   </div>
@@ -144,9 +154,14 @@
         <div class="editor-header">
           <div>
             <h3><i class="fas fa-file-import me-2"></i>Source</h3>
-            <span class="editor-hint">Original Text</span>
+            <span class="editor-hint">Original Text (Press Ctrl+Enter to translate)</span>
           </div>
-          <span id="inputCharCount" class="char-count">0</span>
+          <div class="d-flex align-items-center gap-2">
+            <button id="clearInputBtn" class="btn btn-sm btn-outline-secondary py-0 px-2" title="Clear input text">
+              <i class="fas fa-times"></i>
+            </button>
+            <span id="inputCharCount" class="char-count">0</span>
+          </div>
         </div>
         <textarea id="input" class="editor-textarea" placeholder="Paste your original novel chapter here..."></textarea>
       </div>
@@ -158,12 +173,21 @@
             <h3><i class="fas fa-file-export me-2"></i>Output</h3>
             <span class="editor-hint">Translation result</span>
           </div>
-          <span id="outputCharCount" class="char-count">0</span>
+          <div class="d-flex align-items-center gap-2">
+            <button id="copyOutputBtn" class="btn btn-sm btn-outline-info py-0 px-2" title="Copy output to clipboard">
+              <i class="fas fa-copy me-1"></i>Copy
+            </button>
+            <button id="swapTextBtn" class="btn btn-sm btn-outline-secondary py-0 px-2" title="Use output as input">
+              <i class="fas fa-exchange-alt"></i>
+            </button>
+            <span id="outputCharCount" class="char-count">0</span>
+          </div>
         </div>
         <textarea id="output" class="editor-textarea" placeholder="Translated text will appear here..."></textarea>
       </div>
     </div>
   </div>
+
       </div>
     </div>
 

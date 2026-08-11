@@ -1,6 +1,10 @@
 import locale
+import os
+import re
+import html
 from ebooklib import epub
-from bs4 import BeautifulSoup
+
+NUM_SPLIT_REGEX = re.compile(r'(\d+)')
 
 def natural_sort_key(s):
     """
@@ -8,7 +12,7 @@ def natural_sort_key(s):
     Splits the string into parts of numbers and non-numbers and converts numbers to int.
     """
     return [int(text) if text.isdigit() else text.lower()
-            for text in re.split('([0-9]+)', s)]
+            for text in NUM_SPLIT_REGEX.split(s)]
 
 # services/export_service.py
 import os
@@ -19,6 +23,10 @@ class ExportService:
         self.base_dir = base_dir
 
     def _sanitize(self, val):
+        if not val or not isinstance(val, str):
+            raise ValueError("Invalid path segment.")
+        if '/' in val or '\\' in val or '..' in val:
+            raise ValueError("Unauthorized path traversal detected.")
         cleaned = re.sub(r'[\\/:*?"<>|]', '', val).strip()
         base = os.path.basename(cleaned)
         if base in ('.', '..', ''):
@@ -118,21 +126,22 @@ class ExportService:
         used_filenames = set()
 
         if cover_image_data and cover_filename:
-            book.set_cover(f'images/{cover_filename}', cover_image_data, create_page=False)
+            safe_cover_filename = self._sanitize(cover_filename)
+            escaped_cover_filename = html.escape(safe_cover_filename)
+            book.set_cover(f'images/{safe_cover_filename}', cover_image_data, create_page=False)
             cover_page = epub.EpubHtml(title='Cover', file_name='cover.xhtml', lang='en')
-            cover_page.content = f'<html><body><img src="images/{cover_filename}" alt="Cover" style="max-width: 100%; height: auto; display: block; margin: 0 auto;"/></body></html>'
+            cover_page.content = f'<html><body><img src="images/{escaped_cover_filename}" alt="Cover" style="max-width: 100%; height: auto; display: block; margin: 0 auto;"/></body></html>'
             book.add_item(cover_page)
             epub_chapters.append(cover_page)
             epub_toc_links.append(epub.Link('cover.xhtml', 'Cover', 'cover'))
-            
 
         for i, filename in enumerate(selected_files):
             # Validate that filename doesn't contain path separators to prevent traversal
             if os.path.basename(filename) != filename:
                 continue
                 
-            file_path = os.path.join(novel_dir, filename)
-            if not os.path.isfile(file_path):
+            file_path = os.path.abspath(os.path.join(novel_dir, filename))
+            if not file_path.startswith(novel_dir) or not os.path.isfile(file_path):
                 continue
                 
             content = None
@@ -156,6 +165,8 @@ class ExportService:
             chapter_base_name = os.path.splitext(filename)[0]
             safe_chapter_file_name = re.sub(r'[^\w\s-]', '', chapter_base_name).strip()
             safe_chapter_file_name = re.sub(r'[-\s]+', '_', safe_chapter_file_name)
+            if not safe_chapter_file_name:
+                safe_chapter_file_name = f"chapter_{i+1}"
             
             base_filename = safe_chapter_file_name
             counter = 1
@@ -164,27 +175,21 @@ class ExportService:
                 counter += 1
             used_filenames.add(safe_chapter_file_name)
             
-            formatted_content = re.sub(r'\r?\n\s*\r?\n', 'PARAGRAPH_BREAK', content)
-            formatted_content = formatted_content.replace("\r\n", "<br/>")
-            formatted_content = formatted_content.replace("\n", "<br/>")
-            formatted_content = formatted_content.replace("PARAGRAPH_BREAK", "</p><p>")
-            
-            formatted_content = formatted_content.strip()
-            if not formatted_content.startswith('<p>'):
-                formatted_content = f"<p>{formatted_content}"
-            if not formatted_content.endswith('</p>'):
-                formatted_content = f"{formatted_content}</p>"
-                
-            final_chapter_content = f"<h1>{chapter_base_name}</h1>\n{formatted_content}"
-            soup = BeautifulSoup(final_chapter_content, 'html.parser')
-            chapter_content_for_epub = str(soup)
+            escaped_title = html.escape(chapter_base_name)
+            escaped_content = html.escape(content)
+            paragraphs = re.split(r'\r?\n\s*\r?\n', escaped_content)
+            p_html = []
+            for p in paragraphs:
+                p_clean = p.replace('\r\n', '<br/>').replace('\n', '<br/>').strip()
+                if p_clean:
+                    p_html.append(f"<p>{p_clean}</p>")
+            chapter_content_for_epub = f"<h1>{escaped_title}</h1>\n" + "\n".join(p_html)
             
             c = epub.EpubHtml(title=chapter_base_name, file_name=f'chap_{safe_chapter_file_name}_{i+1}.xhtml', lang='en')
             c.content = chapter_content_for_epub
             book.add_item(c)
             epub_chapters.append(c)
             epub_toc_links.append(epub.Link(c.file_name, chapter_base_name, c.file_name.replace('.xhtml', '')))
-            
         if not epub_chapters:
             raise ValueError("No chapters were successfully processed. The EPUB would be empty.")
             
