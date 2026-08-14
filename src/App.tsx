@@ -13,7 +13,7 @@ import {
 import { translateChapterApi, extractGlossaryApi } from './services/api';
 import { filterRelevantGlossaries, filterRelevantReferences } from './services/contextFilter';
 import { exportNovelAsFolderZip } from './services/exportZip';
-import { setNovelDirHandle, saveNovelToLocalFS, requestFolderPicker } from './services/fileSystemStorage';
+import { setNovelDirHandle, saveNovelToLocalFS, requestFolderPicker, removeNovelDirHandle } from './services/fileSystemStorage';
 import { Header } from './components/Header';
 import { NovelSidebar } from './components/NovelSidebar';
 import { SplitEditor } from './components/SplitEditor';
@@ -47,7 +47,7 @@ export default function App() {
     geminiApiKey: '',
   });
 
-  // Fetch config.json on mount
+  // Fetch config.json on mount (API key TIDAK dikirim server — audit #2)
   useEffect(() => {
     fetch('/api/config')
       .then((res) => res.json())
@@ -58,8 +58,6 @@ export default function App() {
             ...prev,
             provider: data.default_provider || prev.provider,
             model: data.default_model || prev.model,
-            geminiApiKey: data.gemini_api_key || prev.geminiApiKey,
-            openrouterApiKey: data.openrouter_api_key || prev.openrouterApiKey,
           }));
         }
       })
@@ -92,19 +90,22 @@ export default function App() {
     if (typeof newGlobalPath === 'string') {
       setGlobalStoragePath(newGlobalPath);
     }
-    localStorage.setItem('novel_translator_ai_config', JSON.stringify(newConfig));
+    // JANGAN simpan API key di localStorage (audit #2) — key hanya disimpan server-side via POST /api/config
 
     try {
+      const body: Record<string, unknown> = {
+        global_storage_path: newGlobalPath !== undefined ? newGlobalPath : globalStoragePath,
+        default_provider: newConfig.provider,
+        default_model: newConfig.model,
+      };
+      // Hanya kirim API key jika user mengisi field — biarkan kosong untuk mempertahankan key server
+      if (newConfig.geminiApiKey) body.gemini_api_key = newConfig.geminiApiKey;
+      if (newConfig.openrouterApiKey) body.openrouter_api_key = newConfig.openrouterApiKey;
+
       await fetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          global_storage_path: newGlobalPath !== undefined ? newGlobalPath : globalStoragePath,
-          default_provider: newConfig.provider,
-          default_model: newConfig.model,
-          gemini_api_key: newConfig.geminiApiKey,
-          openrouter_api_key: newConfig.openrouterApiKey,
-        }),
+        body: JSON.stringify(body),
       });
     } catch (e) {
       console.error('Failed saving config.json:', e);
@@ -176,7 +177,9 @@ export default function App() {
 
   useEffect(() => {
     if (activeNovel && chapters.length > 0) {
-      syncToLocalFS();
+      // Debounce auto-save 800ms untuk mencegah tumpukan write saat user mengetik (audit #17)
+      const t = setTimeout(() => syncToLocalFS(), 800);
+      return () => clearTimeout(t);
     }
   }, [chapters, references, glossaries, synopsis, writingStyle]);
 
@@ -364,6 +367,7 @@ export default function App() {
     const updatedNovels = novels.filter((n) => n.id !== id);
     setNovels(updatedNovels);
     saveStoredNovels(updatedNovels);
+    removeNovelDirHandle(id); // bersihkan handle folder — cegah memory leak (audit #14)
 
     if (activeNovelId === id) {
       if (updatedNovels.length > 0) {
@@ -444,6 +448,13 @@ export default function App() {
     if (!activeNovelId || !e.target.files || e.target.files.length === 0) return;
 
     const file = e.target.files[0];
+    // Batasi ukuran import file (audit #12) — maks 5MB
+    if (file.size > 5 * 1024 * 1024) {
+      showToast('File terlalu besar (maks 5MB).');
+      if (e.target) e.target.value = '';
+      return;
+    }
+
     const reader = new FileReader();
 
     reader.onload = (event) => {
@@ -491,7 +502,7 @@ export default function App() {
 
     const newItem: GlossaryItem = {
       ...item,
-      id: `glos-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      id: `glos-${crypto.randomUUID()}`,
       novel_id: activeNovelId,
     };
 
@@ -567,7 +578,6 @@ export default function App() {
         ai_config: {
           provider: aiConfig.provider,
           model: aiConfig.model,
-          apiKey: aiConfig.provider === 'openrouter' ? aiConfig.openrouterApiKey : aiConfig.geminiApiKey,
         },
       };
 
@@ -612,7 +622,6 @@ export default function App() {
         ai_config: {
           provider: aiConfig.provider,
           model: aiConfig.model,
-          apiKey: aiConfig.provider === 'openrouter' ? aiConfig.openrouterApiKey : aiConfig.geminiApiKey,
         },
       });
 
@@ -627,7 +636,7 @@ export default function App() {
           );
           if (!exists && activeNovelId) {
             newGlossaryItems.push({
-              id: `glos-auto-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+              id: `glos-auto-${crypto.randomUUID()}`,
               novel_id: activeNovelId,
               istilah_asli: term.istilah_asli,
               istilah_terjemahan: term.istilah_terjemahan,

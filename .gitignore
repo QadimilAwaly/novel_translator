@@ -6,3 +6,9 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# API keys & config lokal — jangan pernah commit (nilai key bisa bocor)
+config.json
+
+# Artefak sinkronisasi (Resilio/SyncThing) — bukan bagian proyek
+.sync/

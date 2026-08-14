@@ -11,6 +11,11 @@ export function getNovelDirHandle(novelId: string): FileSystemDirectoryHandle | 
   return dirHandles.get(novelId);
 }
 
+// Bersihkan handle untuk novel yang dihapus — cegah memory leak (audit #14)
+export function removeNovelDirHandle(novelId: string) {
+  dirHandles.delete(novelId);
+}
+
 export async function requestFolderPicker(): Promise<FileSystemDirectoryHandle | null> {
   if (typeof window !== 'undefined' && 'showDirectoryPicker' in window) {
     try {

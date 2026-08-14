@@ -10,12 +10,113 @@ const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
+  // Default: hanya bind ke localhost untuk mencegah paparan jaringan (audit #3)
+  const HOST = process.env.HOST || '127.0.0.1';
+
+  app.disable('x-powered-by'); // audit #10
+
+  // Security headers (audit #9, #20)
+  app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    // Dev mode (Vite) butuh inline script + websocket HMR; production memakai CSP ketat
+    if (process.env.NODE_ENV === 'production') {
+      res.setHeader(
+        'Content-Security-Policy',
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://openrouter.ai https://generativelanguage.googleapis.com; font-src 'self' data:"
+      );
+    } else {
+      res.setHeader(
+        'Content-Security-Policy',
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ws: http: https:; font-src 'self' data:"
+      );
+    }
+    next();
+  });
 
   app.use(express.json({ limit: '10mb' }));
 
+  // Optional API token auth — aktif hanya jika env APP_API_TOKEN diset (audit #4)
+  const API_TOKEN = process.env.APP_API_TOKEN;
+  if (API_TOKEN) {
+    app.use('/api', (req, res, next) => {
+      const provided = req.headers['x-api-token'] || req.headers.authorization?.replace(/^Bearer\s+/i, '');
+      if (provided === API_TOKEN) return next();
+      return res.status(401).json({ error: 'Unauthorized: API token diperlukan.' });
+    });
+  }
+
   // Sleep helper
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  // ============================================================
+  // SECURITY HELPERS (audit perbaikan)
+  // ============================================================
+
+  // Rate limiter sederhana in-memory per-IP (audit #5)
+  const ipHits = new Map<string, number[]>();
+  function rateLimit(max: number, windowMs: number) {
+    return (req: any, res: any, next: any) => {
+      const ip = req.ip || req.socket?.remoteAddress || 'unknown';
+      const now = Date.now();
+      const hits = (ipHits.get(ip) || []).filter((t) => now - t < windowMs);
+      if (hits.length >= max) {
+        return res.status(429).json({ error: 'Terlalu banyak permintaan. Coba lagi sebentar lagi.' });
+      }
+      hits.push(now);
+      ipHits.set(ip, hits);
+      next();
+    };
+  }
+
+  // Resolve path agar SELALU berada di dalam base directory yang diizinkan (audit #1)
+  // Mengembalikan string path yang aman, atau null jika mencoba keluar dari base.
+  function resolveSafePath(inputPath: string, basePath: string): string | null {
+    const base = path.resolve(basePath);
+    let target = inputPath;
+    if (!path.isAbsolute(target)) {
+      target = path.join(base, target);
+    }
+    const resolved = path.resolve(target);
+    const rel = path.relative(base, resolved);
+    // rel yang diawali '..' atau absolut berarti keluar dari base → tolak
+    if (rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))) {
+      return resolved;
+    }
+    return null;
+  }
+
+  // Sanitize nama file supaya aman untuk Windows (audit #6)
+  function sanitizeFilename(name: string): string {
+    return name
+      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 120) || 'untitled';
+  }
+
+  // Validasi format model ID (audit #18) — cegah input model sembarangan
+  function sanitizeModelId(model: string): string {
+    const cleaned = String(model || '').trim();
+    // hanya izinkan huruf/angka/garis/titik/slash (format "vendor/nama-model")
+    if (/^[a-zA-Z0-9._\/-]{1,100}$/.test(cleaned)) {
+      return cleaned;
+    }
+    return '';
+  }
+
+  // Fetch dengan timeout (audit #8)
+  async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 60000): Promise<Response> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 
   // Helper: OpenRouter API Call
   const callOpenRouter = async ({
@@ -34,7 +135,6 @@ async function startServer() {
     const headers: Record<string, string> = {
       'Authorization': `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://ai.studio',
       'X-Title': 'Novel Translator AI',
     };
 
@@ -51,11 +151,11 @@ async function startServer() {
       body.response_format = { type: 'json_object' };
     }
 
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const response = await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
-    });
+    }, 60000);
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
@@ -228,49 +328,74 @@ async function startServer() {
     return def;
   };
 
+  // Config aman untuk dikirim ke client — TANPA API key mentah (audit #2)
+  const getSafeConfig = () => {
+    const cfg = readConfig();
+    return {
+      global_storage_path: cfg.global_storage_path,
+      default_provider: cfg.default_provider,
+      default_model: cfg.default_model,
+      has_gemini_api_key: Boolean(cfg.gemini_api_key),
+      has_openrouter_api_key: Boolean(cfg.openrouter_api_key),
+    };
+  };
+
   // API Route: Health Check
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', time: new Date().toISOString() });
   });
 
-  // API Route: Get App Config
+  // API Route: Get App Config (tanpa API key mentah — audit #2)
   app.get('/api/config', (req, res) => {
-    res.json(readConfig());
+    res.json(getSafeConfig());
   });
 
-  // API Route: Update App Config
+  // API Route: Update App Config (API key tetap disimpan server-side di config.json)
   app.post('/api/config', (req, res) => {
     try {
       const current = readConfig();
-      const updated = { ...current, ...req.body };
+      const body = req.body || {};
+      // Hanya izinkan field yang dikenal; jangan terima path sesuka hati (audit #1, #6)
+      const updated: Record<string, unknown> = { ...current };
+      if (typeof body.global_storage_path === 'string') {
+        const safe = resolveSafePath(body.global_storage_path, path.join(process.cwd(), 'Novel_Library'));
+        if (safe) updated.global_storage_path = body.global_storage_path;
+      }
+      if (typeof body.default_provider === 'string') updated.default_provider = body.default_provider;
+      if (typeof body.default_model === 'string') updated.default_model = body.default_model;
+      if (body.gemini_api_key !== undefined) updated.gemini_api_key = String(body.gemini_api_key);
+      if (body.openrouter_api_key !== undefined) updated.openrouter_api_key = String(body.openrouter_api_key);
       fs.writeFileSync(CONFIG_PATH, JSON.stringify(updated, null, 2), 'utf-8');
-      res.json({ status: 'success', config: updated });
+      res.json({ status: 'success', config: getSafeConfig() });
     } catch (error: any) {
       console.error('Error saving config.json:', error);
       res.status(500).json({ error: 'Gagal menyimpan config.json' });
     }
   });
   // API Route: Save Chapter to Physical Folder
-  app.post('/api/save-chapter', (req, res) => {
+  app.post('/api/save-chapter', rateLimit(60, 60000), (req, res) => {
     try {
       const { folder_path, chapter_number, chapter_title, original_text, translated_text, novel_title, source_lang, target_lang } = req.body;
       const config = readConfig();
+      const basePath = path.join(process.cwd(), 'Novel_Library');
 
-      let targetFolder = folder_path || config.global_storage_path;
-      if (!path.isAbsolute(targetFolder)) {
-        targetFolder = path.join(process.cwd(), targetFolder);
+      const safeFolder = resolveSafePath(folder_path || config.global_storage_path || basePath, basePath);
+      if (!safeFolder) {
+        return res.status(400).json({ error: 'folder_path tidak valid: mencoba mengakses di luar direktori yang diizinkan.' });
       }
+      const targetFolder = safeFolder;
 
       if (!fs.existsSync(targetFolder)) {
         fs.mkdirSync(targetFolder, { recursive: true });
       }
 
-      const padNum = String(chapter_number || 1).padStart(2, '0');
+      const padNum = String(Number(chapter_number) || 1).padStart(2, '0');
+      const safeTitle = sanitizeFilename(chapter_title || 'Bab ' + chapter_number);
       const fileName = `Chapter_${padNum}.md`;
       const filePath = path.join(targetFolder, fileName);
 
       const divider = '---';
-      const mdContent = `# Chapter ${chapter_number}: ${chapter_title || 'Bab ' + chapter_number}\n\n> **Novel:** ${novel_title || 'Novel'}\n> **Bahasa:** ${source_lang || 'Asli'} -> ${target_lang || 'Target'}\n> **Updated:** ${new Date().toLocaleString()}\n\n${divider}\n\n## Hasil Terjemahan (${target_lang || 'Target'})\n\n${translated_text || '*(Belum diterjemahkan)*'}\n\n${divider}\n\n## Teks Asli (${source_lang || 'Asli'})\n\n${original_text || '*(Kosong)*'}\n`;
+      const mdContent = `# Chapter ${chapter_number}: ${safeTitle}\n\n> **Novel:** ${sanitizeFilename(novel_title || 'Novel')}\n> **Bahasa:** ${source_lang || 'Asli'} -> ${target_lang || 'Target'}\n> **Updated:** ${new Date().toLocaleString()}\n\n${divider}\n\n## Hasil Terjemahan (${target_lang || 'Target'})\n\n${translated_text || '*(Belum diterjemahkan)*'}\n\n${divider}\n\n## Teks Asli (${source_lang || 'Asli'})\n\n${original_text || '*(Kosong)*'}\n`;
 
       fs.writeFileSync(filePath, mdContent, 'utf-8');
       res.json({ status: 'success', path: filePath });
@@ -280,15 +405,17 @@ async function startServer() {
     }
   });
   // API Route: Bulk Export Entire Novel to Local Physical Storage
-  app.post('/api/export-novel', (req, res) => {
+  app.post('/api/export-novel', rateLimit(30, 60000), (req, res) => {
     try {
       const { novel, chapters, references, glossaries, synopsis, writing_style } = req.body;
       const config = readConfig();
+      const basePath = path.join(process.cwd(), 'Novel_Library');
 
-      let targetFolder = novel?.folder_path || config.global_storage_path;
-      if (!path.isAbsolute(targetFolder)) {
-        targetFolder = path.join(process.cwd(), targetFolder);
+      const safeFolder = resolveSafePath(novel?.folder_path || config.global_storage_path || basePath, basePath);
+      if (!safeFolder) {
+        return res.status(400).json({ error: 'folder_path tidak valid: mencoba mengakses di luar direktori yang diizinkan.' });
       }
+      const targetFolder = safeFolder;
 
       if (!fs.existsSync(targetFolder)) {
         fs.mkdirSync(targetFolder, { recursive: true });
@@ -301,7 +428,7 @@ async function startServer() {
 
       // 1. Write metadata/reference.json
       const refData = {
-        novel_title: novel?.judul || 'Novel',
+        novel_title: sanitizeFilename(novel?.judul || 'Novel'),
         source_language: novel?.bahasa_sumber || 'Mandarin',
         target_language: novel?.bahasa_target || 'Indonesia',
         synopsis: synopsis || '',
@@ -318,11 +445,12 @@ async function startServer() {
       const divider = '---';
       if (Array.isArray(chapters)) {
         chapters.forEach((chap) => {
-          const padNum = String(chap.nomor_chapter || 1).padStart(2, '0');
+          const padNum = String(Number(chap.nomor_chapter) || 1).padStart(2, '0');
           const fileName = `Chapter_${padNum}.md`;
           const filePath = path.join(targetFolder, fileName);
+          const safeTitle = sanitizeFilename(chap.judul_chapter || 'Chapter ' + chap.nomor_chapter);
 
-          const mdContent = `# Chapter ${chap.nomor_chapter}: ${chap.judul_chapter}\n\n> **Novel:** ${novel?.judul || 'Novel'}\n> **Status:** ${chap.status_pengerjaan}\n> **Bahasa:** ${novel?.bahasa_sumber || 'Asli'} -> ${novel?.bahasa_target || 'Target'}\n> **Updated:** ${new Date().toLocaleString()}\n\n${divider}\n\n## Hasil Terjemahan (${novel?.bahasa_target || 'Target'})\n\n${chap.teks_terjemahan || '*(Belum diterjemahkan)*'}\n\n${divider}\n\n## Teks Asli (${novel?.bahasa_sumber || 'Asli'})\n\n${chap.teks_asli || '*(Kosong)*'}\n`;
+          const mdContent = `# Chapter ${chap.nomor_chapter}: ${safeTitle}\n\n> **Novel:** ${sanitizeFilename(novel?.judul || 'Novel')}\n> **Status:** ${chap.status_pengerjaan}\n> **Bahasa:** ${novel?.bahasa_sumber || 'Asli'} -> ${novel?.bahasa_target || 'Target'}\n> **Updated:** ${new Date().toLocaleString()}\n\n${divider}\n\n## Hasil Terjemahan (${novel?.bahasa_target || 'Target'})\n\n${chap.teks_terjemahan || '*(Belum diterjemahkan)*'}\n\n${divider}\n\n## Teks Asli (${novel?.bahasa_sumber || 'Asli'})\n\n${chap.teks_asli || '*(Kosong)*'}\n`;
 
           fs.writeFileSync(filePath, mdContent, 'utf-8');
         });
@@ -335,7 +463,7 @@ async function startServer() {
     }
   });
   // API Route: Translate Chapter (Phase 1 & 2 Context Assembly & Translation Execution)
-  app.post('/api/translate', async (req, res) => {
+  app.post('/api/translate', rateLimit(30, 60000), async (req, res) => {
     try {
       const {
         teks_asli,
@@ -352,10 +480,16 @@ async function startServer() {
       if (!teks_asli || !teks_asli.trim()) {
         return res.status(400).json({ error: 'Teks asli tidak boleh kosong.' });
       }
+      if (typeof teks_asli === 'string' && teks_asli.length > 200000) {
+        return res.status(400).json({ error: 'Teks asli terlalu besar (maks 200.000 karakter).' });
+      }
 
-      const provider = ai_config?.provider || 'gemini';
-      const model = ai_config?.model || (provider === 'openrouter' ? 'google/gemini-2.5-flash' : 'gemini-2.5-flash');
-      const apiKeyOverride = ai_config?.apiKey;
+      const config = readConfig();
+      const provider = ai_config?.provider || config.default_provider || 'gemini';
+      let model = ai_config?.model || (provider === 'openrouter' ? 'google/gemini-2.5-flash' : 'gemini-2.5-flash');
+      model = sanitizeModelId(model) || (provider === 'openrouter' ? 'google/gemini-2.5-flash' : 'gemini-2.5-flash');
+      // Jangan percaya API key dari client — resolve server-side dari config.json / env (audit #2)
+      const apiKeyOverride = provider === 'openrouter' ? (config.openrouter_api_key || process.env.OPENROUTER_API_KEY) : (config.gemini_api_key || process.env.GEMINI_API_KEY);
 
       // Format Glossary for Injection
       const glossaryPrompt = Array.isArray(glossary_items) && glossary_items.length > 0
@@ -396,9 +530,9 @@ Terjemahkan teks di atas ke ${bahasa_target} sesuai aturan dan glosarium di atas
       let translatedText = '';
 
       if (provider === 'openrouter') {
-        const apiKey = apiKeyOverride || process.env.OPENROUTER_API_KEY;
+        const apiKey = apiKeyOverride;
         if (!apiKey) {
-          return res.status(400).json({ error: 'OPENROUTER_API_KEY belum dikonfigurasi. Silakan masukkan API Key OpenRouter Anda di Pengaturan Model.' });
+          return res.status(400).json({ error: 'OPENROUTER_API_KEY belum dikonfigurasi. Silakan set API Key OpenRouter di Pengaturan Model.' });
         }
         translatedText = await callOpenRouterWithRetry({
           model,
@@ -438,7 +572,7 @@ Terjemahkan teks di atas ke ${bahasa_target} sesuai aturan dan glosarium di atas
   });
 
   // API Route: Extract & Sync Glossary (Phase 3 Progression & Auto Extraction)
-  app.post('/api/extract-glossary', async (req, res) => {
+  app.post('/api/extract-glossary', rateLimit(20, 60000), async (req, res) => {
     try {
       const { teks_asli, teks_terjemahan, nomor_chapter, existing_glossary, ai_config } = req.body;
 
@@ -446,9 +580,12 @@ Terjemahkan teks di atas ke ${bahasa_target} sesuai aturan dan glosarium di atas
         return res.status(400).json({ error: 'Teks asli dan teks terjemahan diperlukan untuk ekstraksi glosarium.' });
       }
 
-      const provider = ai_config?.provider || 'gemini';
-      const model = ai_config?.model || (provider === 'openrouter' ? 'google/gemini-2.5-flash' : 'gemini-2.5-flash');
-      const apiKeyOverride = ai_config?.apiKey;
+      const config = readConfig();
+      const provider = ai_config?.provider || config.default_provider || 'gemini';
+      let model = ai_config?.model || (provider === 'openrouter' ? 'google/gemini-2.5-flash' : 'gemini-2.5-flash');
+      model = sanitizeModelId(model) || (provider === 'openrouter' ? 'google/gemini-2.5-flash' : 'gemini-2.5-flash');
+      // API key resolve server-side (audit #2)
+      const apiKeyOverride = provider === 'openrouter' ? (config.openrouter_api_key || process.env.OPENROUTER_API_KEY) : (config.gemini_api_key || process.env.GEMINI_API_KEY);
 
       const existingTermsList = Array.isArray(existing_glossary) ? existing_glossary.join(', ') : 'Belum ada';
 
@@ -488,9 +625,9 @@ HANYA ekstrak istilah yang penting dan benar-benar berguna untuk konsistensi bab
       let parsed = { terms: [] };
 
       if (provider === 'openrouter') {
-        const apiKey = apiKeyOverride || process.env.OPENROUTER_API_KEY;
+        const apiKey = apiKeyOverride;
         if (!apiKey) {
-          return res.status(400).json({ error: 'OPENROUTER_API_KEY belum dikonfigurasi. Silakan masukkan API Key OpenRouter Anda di Pengaturan Model.' });
+          return res.status(400).json({ error: 'OPENROUTER_API_KEY belum dikonfigurasi. Silakan set API Key OpenRouter di Pengaturan Model.' });
         }
         const jsonText = await callOpenRouterWithRetry({
           model,
@@ -568,8 +705,8 @@ HANYA ekstrak istilah yang penting dan benar-benar berguna untuk konsistensi bab
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[Novel Translator Server] Listening on http://localhost:${PORT}`);
+  app.listen(PORT, HOST, () => {
+    console.log(`[Novel Translator Server] Listening on http://${HOST}:${PORT}`);
   });
 }
 
