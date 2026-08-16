@@ -1,5 +1,5 @@
 import React from 'react';
-import { BookOpen, FolderDown, Plus, Sparkles, Languages, CheckCircle2, Sliders, Cpu, ArrowRightLeft, FolderOpen, RefreshCw, PanelLeftClose, PanelLeft, PanelRightClose, PanelRight } from 'lucide-react';
+import { FolderDown, Plus, Sparkles, Languages, CheckCircle2, Sliders, Cpu, ArrowRightLeft, FolderOpen, RefreshCw, PanelLeftClose, PanelLeft, PanelRightClose, PanelRight } from 'lucide-react';
 import { Novel, AIConfig, LanguageCode, SUPPORTED_LANGUAGES } from '../types';
 
 interface HeaderProps {
@@ -58,16 +58,14 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
         )}
 
-        <div className="bg-indigo-600 p-2 rounded-lg text-white font-bold shadow-md shadow-indigo-900/40 flex items-center justify-center">
-          <BookOpen className="w-5 h-5 text-white" />
-        </div>
+        <img src="/icon.png" alt="Novel Translator Pro" className="w-6 h-6" />
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-sm font-bold tracking-widest text-indigo-400 uppercase font-sans">
-              Novel Library AI
+              Novel Translator Pro
             </h1>
-            <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-              Folder-Based
+            <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              Offline-First
             </span>
           </div>
           <div className="text-xs text-gray-400 flex flex-wrap items-center gap-2 mt-0.5">

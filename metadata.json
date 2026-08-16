@@ -1,5 +1,5 @@
 {
-  "name": "Aplikasi Translator Novel",
+  "name": "Novel Translator Pro",
   "description": "Penerjemah novel AI kontekstual dengan alur memori otomatis, manajemen glosarium dinamis, dan ekspor struktur folder fisik.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

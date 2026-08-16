@@ -135,7 +135,7 @@ async function startServer() {
     const headers: Record<string, string> = {
       'Authorization': `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
-      'X-Title': 'Novel Translator AI',
+      'X-Title': 'Novel Translator Pro',
     };
 
     const body: any = {
