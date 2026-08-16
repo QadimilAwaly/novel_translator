@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Library,
   ChevronRight,
@@ -10,6 +10,7 @@ import {
   Clock,
   AlertCircle,
   FolderTree,
+  FolderPlus,
   Upload,
   Trash2,
   BookOpenCheck,
@@ -32,6 +33,9 @@ interface NovelSidebarProps {
   onDeleteNovel: (id: string, e: React.MouseEvent) => void;
   onRenameNovel: (id: string, newTitle: string) => void;
   onRenameChapter: (id: string, newTitle: string) => void;
+  onImportNovelFolder?: () => void;
+  onAddNovel?: () => void;
+  onClose?: () => void;
 }
 
 export const NovelSidebar: React.FC<NovelSidebarProps> = ({
@@ -47,9 +51,18 @@ export const NovelSidebar: React.FC<NovelSidebarProps> = ({
   onDeleteNovel,
   onRenameNovel,
   onRenameChapter,
+  onImportNovelFolder,
+  onAddNovel,
+  onClose,
 }) => {
   const [expandedNovelId, setExpandedNovelId] = useState<string | null>(activeNovelId);
   const [searchTerm, setSearchTerm] = useState('');
+
+  useEffect(() => {
+    if (activeNovelId) {
+      setExpandedNovelId(activeNovelId);
+    }
+  }, [activeNovelId]);
   const [editingNovelId, setEditingNovelId] = useState<string | null>(null);
   const [novelTitleInput, setNovelTitleInput] = useState('');
 
@@ -92,26 +105,67 @@ export const NovelSidebar: React.FC<NovelSidebarProps> = ({
   );
 
   return (
-    <aside className="w-full lg:w-64 bg-[#16181D] border-r border-gray-800 flex flex-col h-full text-gray-200 select-none shrink-0">
+    <aside className="fixed lg:static inset-y-0 left-0 z-40 w-72 sm:w-80 max-w-[85vw] lg:max-w-none lg:w-64 bg-[#16181D] border-r border-gray-800 flex flex-col h-full text-gray-200 select-none shrink-0 shadow-2xl lg:shadow-none animate-in slide-in-from-left duration-200">
       {/* Panel Title */}
       <div className="p-4 border-b border-gray-800 flex items-center justify-between">
         <div className="flex items-center gap-2 font-bold text-xs uppercase tracking-widest text-indigo-400">
           <div className="w-2.5 h-2.5 bg-indigo-500 rounded-sm"></div>
           <span>Novel Library</span>
         </div>
-        <span className="text-[10px] text-gray-500 font-mono">
-          {novels.length} Judul
-        </span>
+        <div className="flex items-center gap-1.5">
+          {onAddNovel && (
+            <button
+              onClick={onAddNovel}
+              className="p-1 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 border border-indigo-500/20 rounded transition-colors"
+              title="Tambah Novel Baru"
+            >
+              <Plus className="w-3.5 h-3.5" />
+            </button>
+          )}
+          {onImportNovelFolder && (
+            <button
+              onClick={onImportNovelFolder}
+              className="p-1 hover:bg-gray-800 rounded text-gray-400 hover:text-indigo-300 transition-colors"
+              title="Impor / Merge Folder Novel Eksternal (misal: E:\Novel_Library\The_Executed_Duke)"
+            >
+              <FolderPlus className="w-4 h-4 text-indigo-400" />
+            </button>
+          )}
+          <span className="text-[10px] text-gray-500 font-mono">
+            {novels.length} Judul
+          </span>
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="p-1 hover:bg-gray-800 rounded text-gray-400 hover:text-gray-200 transition-colors lg:hidden ml-1"
+              title="Tutup Panel Library"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </div>
-
-      {/* Novel List Accordion */}
       <div className="flex-1 overflow-y-auto p-2 space-y-2">
-        {novels.map((novel) => {
-          const isSelected = novel.id === activeNovelId;
-          const isExpanded = expandedNovelId === novel.id || isSelected;
-
-          return (
-            <div
+        {novels.length === 0 ? (
+          <div className="p-6 text-center text-gray-500 space-y-3 flex flex-col items-center justify-center h-48">
+            <Library className="w-8 h-8 text-gray-600 mb-1" />
+            <p className="text-xs text-gray-400">Belum ada novel di library.</p>
+            {onAddNovel && (
+              <button
+                onClick={onAddNovel}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-xs font-semibold shadow-md transition-all active:scale-[0.98]"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Tambah Novel Baru</span>
+              </button>
+            )}
+          </div>
+        ) : (
+          novels.map((novel) => {
+            const isSelected = novel.id === activeNovelId;
+            const isExpanded = expandedNovelId === novel.id || isSelected;
+            return (
+              <div
               key={novel.id}
               className={`rounded border transition-all ${
                 isSelected
@@ -330,7 +384,7 @@ export const NovelSidebar: React.FC<NovelSidebarProps> = ({
               )}
             </div>
           );
-        })}
+        }))}
       </div>
 
       {/* Footer Info */}

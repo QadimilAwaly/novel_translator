@@ -8,7 +8,11 @@ import {
   getStoredReferences,
   saveStoredReferences,
   getStoredGlossaries,
-  saveStoredGlossaries
+  saveStoredGlossaries,
+  fetchServerStorage,
+  deleteStoredNovel,
+  deleteStoredChapter,
+  renameStoredNovel
 } from './services/storage';
 import { translateChapterApi, extractGlossaryApi } from './services/api';
 import { filterRelevantGlossaries, filterRelevantReferences } from './services/contextFilter';
@@ -71,6 +75,19 @@ export default function App() {
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isModelSettingsModalOpen, setIsModelSettingsModalOpen] = useState(false);
 
+  // Panel visibility states (responsive defaults)
+  const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth >= 1024;
+    }
+    return true;
+  });
+  const [isRightPanelOpen, setIsRightPanelOpen] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth >= 1280;
+    }
+    return true;
+  });
   // AI Loading & Notification States
   const [isTranslating, setIsTranslating] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
@@ -114,15 +131,29 @@ export default function App() {
     showToast(`Pengaturan tersimpan ke config.json (${newConfig.provider.toUpperCase()}: ${newConfig.model}).`);
   };
 
-  // 1. Initial Load of Novels
+  // 1. Initial Load of Novels (from server disk, fallback to local)
   useEffect(() => {
-    const loadedNovels = getStoredNovels();
-    setNovels(loadedNovels);
-    if (loadedNovels.length > 0) {
-      setActiveNovelId(loadedNovels[0].id);
-    }
+    fetchServerStorage()
+      .then((serverData) => {
+        if (serverData && Array.isArray(serverData.novels) && serverData.novels.length > 0) {
+          setNovels(serverData.novels);
+          setActiveNovelId((prev) => prev || serverData.novels[0].id);
+        } else {
+          const loadedNovels = getStoredNovels();
+          setNovels(loadedNovels);
+          if (loadedNovels.length > 0) {
+            setActiveNovelId((prev) => prev || loadedNovels[0].id);
+          }
+        }
+      })
+      .catch(() => {
+        const loadedNovels = getStoredNovels();
+        setNovels(loadedNovels);
+        if (loadedNovels.length > 0) {
+          setActiveNovelId((prev) => prev || loadedNovels[0].id);
+        }
+      });
   }, []);
-
   // 2. Load Chapters, References, Glossaries when Active Novel changes
   useEffect(() => {
     if (!activeNovelId) return;
@@ -241,6 +272,97 @@ export default function App() {
       showToast(`Terjadi kesalahan: ${err.message || 'Gagal mengekstrak novel'}`);
     }
   };
+  // Handler: Import & Merge Existing Local Novel Folder
+  const handleImportNovelFolder = async () => {
+    const inputPath = prompt(
+      'Masukkan path folder fisik novel yang ingin di-import / di-merge (misal: E:\\Novel_Library\\The_Executed_Duke atau /Users/nama/Novels/The_Executed_Duke):'
+    );
+    if (!inputPath || !inputPath.trim()) return;
+
+    try {
+      const res = await fetch('/api/import-novel-folder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folder_path: inputPath.trim() }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.status) {
+        alert(`Gagal mengimpor folder: ${data.error || 'Folder tidak dapat dibaca'}`);
+        return;
+      }
+
+      // Create new novel object or update existing if title matches
+      const existingNovel = novels.find((n) => n.judul.toLowerCase() === data.novel_title.toLowerCase());
+      const novelId = existingNovel ? existingNovel.id : `novel-${Date.now()}`;
+
+      const importedNovel: Novel = {
+        id: novelId,
+        judul: data.novel_title,
+        folder_path: data.folder_path,
+        bahasa_sumber: data.source_language || 'Mandarin',
+        bahasa_target: data.target_language || 'Indonesia',
+        createdAt: existingNovel ? existingNovel.createdAt : new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      // Save Novel
+      const updatedNovels = existingNovel
+        ? novels.map((n) => (n.id === novelId ? importedNovel : n))
+        : [importedNovel, ...novels];
+      setNovels(updatedNovels);
+      saveStoredNovels(updatedNovels);
+
+      // Save Chapters
+      const allChapters = getStoredChapters().filter((c) => c.novel_id !== novelId);
+      const newChapters: Chapter[] = (data.chapters || []).map((c: any) => ({
+        id: `chap-${novelId}-${c.nomor_chapter}-${Date.now()}`,
+        novel_id: novelId,
+        nomor_chapter: c.nomor_chapter,
+        judul_chapter: c.judul_chapter,
+        teks_asli: c.teks_asli,
+        teks_terjemahan: c.teks_terjemahan,
+        status_pengerjaan: c.status_pengerjaan || 'Belum',
+        updatedAt: new Date().toISOString(),
+      }));
+
+      const updatedAllChapters = [...allChapters, ...newChapters];
+      saveStoredChapters(updatedAllChapters);
+
+      // Save References & Glossaries
+      if (Array.isArray(data.reference_items) && data.reference_items.length > 0) {
+        const existingRefs = getStoredReferences(novelId);
+        const newRefs: ReferenceItem[] = data.reference_items.map((r: any) => ({
+          id: `ref-${novelId}-${Date.now()}-${Math.random()}`,
+          novel_id: novelId,
+          kategori: r.kategori || 'Lore',
+          nama_item: r.nama_item || 'Item',
+          deskripsi: r.deskripsi || '',
+        }));
+        saveStoredReferences([...existingRefs, ...newRefs]);
+      }
+
+      if (Array.isArray(data.glossaries) && data.glossaries.length > 0) {
+        const existingGloss = getStoredGlossaries(novelId);
+        const newGloss: GlossaryItem[] = data.glossaries.map((g: any) => ({
+          id: `glos-${novelId}-${Date.now()}-${Math.random()}`,
+          novel_id: novelId,
+          istilah_asli: g.istilah_asli,
+          istilah_terjemahan: g.istilah_terjemahan,
+          kategori: g.kategori || 'Istilah Khusus',
+          chapter_ditemukan: g.chapter_ditemukan || 'Imported',
+          konteks: g.konteks || '',
+        }));
+        saveStoredGlossaries([...existingGloss, ...newGloss]);
+      }
+
+      setActiveNovelId(novelId);
+      showToast(`Berhasil meng-impor/merge "${importedNovel.judul}" (${newChapters.length} bab ditemukan)!`);
+    } catch (err: any) {
+      console.error('Error importing novel folder:', err);
+      showToast(`Gagal mengimpor: ${err.message || 'Kesalahan jaringan'}`);
+    }
+  };
   // Helper: Save chapter to local disk via server API (/api/save-chapter)
   const saveChapterToDiskServer = async (chap: Chapter) => {
     if (!activeNovel) return;
@@ -277,8 +399,10 @@ export default function App() {
   // Handler: Select Chapter
   const handleSelectChapter = (id: string) => {
     setActiveChapterId(id);
+    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+      setIsLeftSidebarOpen(false);
+    }
   };
-
   // Handler: Update Chapter Text (Original & Translation)
   const handleUpdateChapterText = (original: string, translated: string) => {
     if (!activeChapterId || !activeNovelId) return;
@@ -364,9 +488,8 @@ export default function App() {
     e.stopPropagation();
     if (!confirm('Apakah Anda yakin ingin menghapus novel ini beserta seluruh bab dan glosariumnya?')) return;
 
-    const updatedNovels = novels.filter((n) => n.id !== id);
+    const updatedNovels = deleteStoredNovel(id);
     setNovels(updatedNovels);
-    saveStoredNovels(updatedNovels);
     removeNovelDirHandle(id); // bersihkan handle folder — cegah memory leak (audit #14)
 
     if (activeNovelId === id) {
@@ -376,23 +499,17 @@ export default function App() {
         setActiveNovelId(null);
       }
     }
-    showToast('Novel berhasil dihapus.');
+    showToast('Novel dan foldernya di disk berhasil dihapus.');
   };
+
   // Handler: Rename Novel
   const handleRenameNovel = (id: string, newTitle: string) => {
     const trimmed = newTitle.trim();
     if (!trimmed) return;
 
-    const updatedNovels = novels.map((n) => {
-      if (n.id === id) {
-        return { ...n, judul: trimmed, updatedAt: new Date().toISOString() };
-      }
-      return n;
-    });
-
+    const updatedNovels = renameStoredNovel(id, trimmed);
     setNovels(updatedNovels);
-    saveStoredNovels(updatedNovels);
-    showToast('Judul novel berhasil diperbarui.');
+    showToast('Judul novel dan folder di disk berhasil diperbarui.');
   };
 
   // Handler: Rename Chapter
@@ -479,11 +596,7 @@ export default function App() {
     e.stopPropagation();
     if (!confirm('Hapus chapter ini?')) return;
 
-    const allChapters = getStoredChapters();
-    const updatedAllChapters = allChapters.filter((c) => c.id !== id);
-    saveStoredChapters(updatedAllChapters);
-
-    const activeChapters = updatedAllChapters.filter((c) => c.novel_id === activeNovelId);
+    const activeChapters = deleteStoredChapter(id, activeNovelId || undefined);
     setChapters(activeChapters);
 
     if (activeChapterId === id) {
@@ -508,7 +621,7 @@ export default function App() {
 
     const allGloss = getStoredGlossaries(activeNovelId);
     const updatedAll = [newItem, ...allGloss];
-    saveStoredGlossaries(updatedAll);
+    saveStoredGlossaries(updatedAll, activeNovelId);
     setGlossaries(updatedAll);
     showToast(`Istilah "${newItem.istilah_asli}" ditambahkan ke glosarium.`);
   };
@@ -518,7 +631,7 @@ export default function App() {
     if (!activeNovelId) return;
 
     const updated = glossaries.filter((g) => g.id !== id);
-    saveStoredGlossaries(updated);
+    saveStoredGlossaries(updated, activeNovelId);
     setGlossaries(updated);
     showToast('Istilah dihapus dari glosarium.');
   };
@@ -534,7 +647,7 @@ export default function App() {
     };
 
     const updated = [newItem, ...references];
-    saveStoredReferences(updated);
+    saveStoredReferences(updated, activeNovelId);
     setReferences(updated);
     showToast(`Lore/Karakter "${newItem.nama_item}" ditambahkan.`);
   };
@@ -544,7 +657,7 @@ export default function App() {
     if (!activeNovelId) return;
 
     const updated = references.filter((r) => r.id !== id);
-    saveStoredReferences(updated);
+    saveStoredReferences(updated, activeNovelId);
     setReferences(updated);
     showToast('Lore dihapus dari referensi.');
   };
@@ -707,24 +820,41 @@ export default function App() {
         onUpdateNovelLanguages={handleUpdateNovelLanguages}
         onSelectFolderForActiveNovel={handleSelectFolderForActiveNovel}
         onReExportNovelToLocal={handleReExportNovelToLocal}
+        isLeftSidebarOpen={isLeftSidebarOpen}
+        isRightPanelOpen={isRightPanelOpen}
+        onToggleLeftSidebar={() => setIsLeftSidebarOpen((prev) => !prev)}
+        onToggleRightPanel={() => setIsRightPanelOpen((prev) => !prev)}
       />
       {/* 3-Panel Main Layout Container */}
-      <main className="flex-1 flex flex-col lg:flex-row overflow-hidden relative">
+      <main className="flex-1 flex flex-row overflow-hidden relative min-h-0 min-w-0">
         {/* Panel 1: Navigasi Novel & Chapter (Left) */}
-        <NovelSidebar
-          novels={novels}
-          activeNovelId={activeNovelId}
-          onSelectNovel={handleSelectNovel}
-          chapters={chapters}
-          activeChapterId={activeChapterId}
-          onSelectChapter={handleSelectChapter}
-          onAddChapter={() => setIsNewChapterModalOpen(true)}
-          onImportChapterFile={handleImportChapterFile}
-          onDeleteChapter={handleDeleteChapter}
-          onDeleteNovel={handleDeleteNovel}
-          onRenameNovel={handleRenameNovel}
-          onRenameChapter={handleRenameChapter}
-        />
+        {isLeftSidebarOpen && (
+          <>
+            {/* Mobile Backdrop */}
+            <div
+              className="fixed inset-0 bg-black/60 backdrop-blur-xs z-30 lg:hidden"
+              onClick={() => setIsLeftSidebarOpen(false)}
+              aria-label="Tutup Library Sidebar"
+            />
+            <NovelSidebar
+              novels={novels}
+              activeNovelId={activeNovelId}
+              onSelectNovel={handleSelectNovel}
+              chapters={chapters}
+              activeChapterId={activeChapterId}
+              onSelectChapter={handleSelectChapter}
+              onAddChapter={() => setIsNewChapterModalOpen(true)}
+              onImportChapterFile={handleImportChapterFile}
+              onDeleteChapter={handleDeleteChapter}
+              onDeleteNovel={handleDeleteNovel}
+              onRenameNovel={handleRenameNovel}
+              onRenameChapter={handleRenameChapter}
+              onImportNovelFolder={handleImportNovelFolder}
+              onAddNovel={() => setIsNewNovelModalOpen(true)}
+              onClose={() => setIsLeftSidebarOpen(false)}
+            />
+          </>
+        )}
 
         {/* Panel 2: Split-View Editor Kerja (Center) */}
         <SplitEditor
@@ -735,28 +865,40 @@ export default function App() {
           onTranslateChapter={handleTranslateChapter}
           onExtractGlossary={handleExtractGlossary}
           onUpdateNovelLanguages={handleUpdateNovelLanguages}
+          onAddNovel={() => setIsNewNovelModalOpen(true)}
+          onAddChapter={() => setIsNewChapterModalOpen(true)}
           isTranslating={isTranslating}
           isExtracting={isExtracting}
           promptStats={promptStats}
         />
 
         {/* Panel 3: Konteks, Lore & Glosarium (Right) */}
-        <ContextPanel
-          activeNovel={activeNovel}
-          references={references}
-          glossaries={glossaries}
-          synopsis={synopsis}
-          writingStyle={writingStyle}
-          onChangeSynopsis={setSynopsis}
-          onChangeWritingStyle={setWritingStyle}
-          onAddReferenceItem={handleAddReferenceItem}
-          onDeleteReferenceItem={handleDeleteReferenceItem}
-          onAddGlossaryItem={handleAddGlossaryItem}
-          onDeleteGlossaryItem={handleDeleteGlossaryItem}
-          onOpenNewGlossaryModal={() => setIsNewGlossaryModalOpen(true)}
-        />
+        {isRightPanelOpen && (
+          <>
+            {/* Mobile Backdrop */}
+            <div
+              className="fixed inset-0 bg-black/60 backdrop-blur-xs z-30 lg:hidden"
+              onClick={() => setIsRightPanelOpen(false)}
+              aria-label="Tutup Context Panel"
+            />
+            <ContextPanel
+              activeNovel={activeNovel}
+              references={references}
+              glossaries={glossaries}
+              synopsis={synopsis}
+              writingStyle={writingStyle}
+              onChangeSynopsis={setSynopsis}
+              onChangeWritingStyle={setWritingStyle}
+              onAddReferenceItem={handleAddReferenceItem}
+              onDeleteReferenceItem={handleDeleteReferenceItem}
+              onAddGlossaryItem={handleAddGlossaryItem}
+              onDeleteGlossaryItem={handleDeleteGlossaryItem}
+              onOpenNewGlossaryModal={() => setIsNewGlossaryModalOpen(true)}
+              onClose={() => setIsRightPanelOpen(false)}
+            />
+          </>
+        )}
       </main>
-
       {/* Dialog Modals */}
       <NewNovelModal
         isOpen={isNewNovelModalOpen}

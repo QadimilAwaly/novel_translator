@@ -1,5 +1,5 @@
 import React from 'react';
-import { BookOpen, FolderDown, Plus, Sparkles, Languages, CheckCircle2, Sliders, Cpu, ArrowRightLeft, FolderOpen, RefreshCw } from 'lucide-react';
+import { BookOpen, FolderDown, Plus, Sparkles, Languages, CheckCircle2, Sliders, Cpu, ArrowRightLeft, FolderOpen, RefreshCw, PanelLeftClose, PanelLeft, PanelRightClose, PanelRight } from 'lucide-react';
 import { Novel, AIConfig, LanguageCode, SUPPORTED_LANGUAGES } from '../types';
 
 interface HeaderProps {
@@ -14,8 +14,11 @@ interface HeaderProps {
   onUpdateNovelLanguages?: (source: LanguageCode, target: LanguageCode) => void;
   onSelectFolderForActiveNovel?: () => void;
   onReExportNovelToLocal?: () => void;
+  isLeftSidebarOpen?: boolean;
+  isRightPanelOpen?: boolean;
+  onToggleLeftSidebar?: () => void;
+  onToggleRightPanel?: () => void;
 }
-
 export const Header: React.FC<HeaderProps> = ({
   activeNovel,
   totalChapters,
@@ -28,6 +31,10 @@ export const Header: React.FC<HeaderProps> = ({
   onUpdateNovelLanguages,
   onSelectFolderForActiveNovel,
   onReExportNovelToLocal,
+  isLeftSidebarOpen = true,
+  isRightPanelOpen = true,
+  onToggleLeftSidebar,
+  onToggleRightPanel,
 }) => {
   const isOpenRouter = aiConfig.provider === 'openrouter';
   const displayModel = aiConfig.model || (isOpenRouter ? 'google/gemini-2.5-flash' : 'gemini-2.5-flash');
@@ -38,9 +45,19 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <header className="bg-[#16181D] border-b border-gray-800 text-gray-200 px-4 py-3 shadow-md flex flex-wrap items-center justify-between gap-4 select-none">
-      {/* Brand & Active Novel Title */}
+    <header className="bg-[#16181D] border-b border-gray-800 text-gray-200 px-4 py-3 shadow-md flex flex-wrap items-center justify-between gap-4 select-none relative z-40">
+      {/* Left Toggle & Brand & Active Novel Title */}
       <div className="flex items-center gap-3">
+        {onToggleLeftSidebar && (
+          <button
+            onClick={onToggleLeftSidebar}
+            className="p-1.5 bg-[#0F1113] hover:bg-gray-800 border border-gray-800 rounded text-gray-400 hover:text-indigo-400 transition-colors"
+            title={isLeftSidebarOpen ? 'Sembunyikan Panel Kiri (Library)' : 'Tampilkan Panel Kiri (Library)'}
+          >
+            {isLeftSidebarOpen ? <PanelLeftClose className="w-4 h-4 text-indigo-400" /> : <PanelLeft className="w-4 h-4" />}
+          </button>
+        )}
+
         <div className="bg-indigo-600 p-2 rounded-lg text-white font-bold shadow-md shadow-indigo-900/40 flex items-center justify-center">
           <BookOpen className="w-5 h-5 text-white" />
         </div>
@@ -172,16 +189,14 @@ export const Header: React.FC<HeaderProps> = ({
             <span className="hidden sm:inline">Re-Ekstrak ke Lokal</span>
           </button>
         )}
-
-        {/* Connect Folder / Export Folder ZIP Button */}
-        {activeNovel && (
+        {/* Right Panel Toggle Button */}
+        {onToggleRightPanel && (
           <button
-            onClick={onSelectFolderForActiveNovel || onOpenExportModal}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1F2229] hover:bg-gray-800 text-gray-200 hover:text-white border border-gray-700/80 rounded-md text-xs font-medium transition-all shadow-sm active:scale-[0.98]"
-            title="Hubungkan Folder Lokal Fisik Komputer untuk Auto-Save"
+            onClick={onToggleRightPanel}
+            className="p-1.5 bg-[#0F1113] hover:bg-gray-800 border border-gray-800 rounded text-gray-400 hover:text-indigo-400 transition-colors"
+            title={isRightPanelOpen ? 'Sembunyikan Panel Kanan (Context)' : 'Tampilkan Panel Kanan (Context)'}
           >
-            <FolderOpen className="w-4 h-4 text-emerald-400" />
-            <span className="hidden sm:inline">Hubungkan Folder</span>
+            {isRightPanelOpen ? <PanelRightClose className="w-4 h-4 text-indigo-400" /> : <PanelRight className="w-4 h-4" />}
           </button>
         )}
 

@@ -221,6 +221,69 @@ export const initialGlossaries: GlossaryItem[] = [
     konteks: 'Cairan mana bersinar murni untuk transmutasi'
   }
 ];
+export interface LibraryStorageData {
+  novels: Novel[];
+  chapters: Chapter[];
+  references: ReferenceItem[];
+  glossaries: GlossaryItem[];
+  last_updated?: string;
+}
+
+let syncTimeout: ReturnType<typeof setTimeout> | null = null;
+
+export async function fetchServerStorage(): Promise<LibraryStorageData | null> {
+  try {
+    const res = await fetch('/api/storage');
+    if (!res.ok) return null;
+    const json = await res.json();
+    if (json.status === 'success' && json.data) {
+      const data: LibraryStorageData = json.data;
+      if (Array.isArray(data.novels)) {
+        localStorage.setItem(NOVELS_KEY, JSON.stringify(data.novels));
+      }
+      if (Array.isArray(data.chapters)) {
+        localStorage.setItem(CHAPTERS_KEY, JSON.stringify(data.chapters));
+      }
+      if (Array.isArray(data.references)) {
+        localStorage.setItem(REFERENCES_KEY, JSON.stringify(data.references));
+      }
+      if (Array.isArray(data.glossaries)) {
+        localStorage.setItem(GLOSSARIES_KEY, JSON.stringify(data.glossaries));
+      }
+      return data;
+    }
+  } catch (err) {
+    console.warn('Could not fetch server storage, using local cache:', err);
+  }
+  return null;
+}
+
+export function syncServerStorage(customData?: Partial<LibraryStorageData>) {
+  if (syncTimeout) {
+    clearTimeout(syncTimeout);
+  }
+  syncTimeout = setTimeout(async () => {
+    try {
+      const novels = customData?.novels || getStoredNovels();
+      const chapters = customData?.chapters || getStoredChapters();
+      const references = customData?.references || getAllStoredReferences();
+      const glossaries = customData?.glossaries || getAllStoredGlossaries();
+
+      await fetch('/api/storage/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          novels,
+          chapters,
+          references,
+          glossaries,
+        }),
+      });
+    } catch (err) {
+      console.warn('Failed syncing library to server storage:', err);
+    }
+  }, 300);
+}
 
 export function getStoredNovels(): Novel[] {
   const data = localStorage.getItem(NOVELS_KEY);
@@ -237,7 +300,49 @@ export function getStoredNovels(): Novel[] {
 
 export function saveStoredNovels(novels: Novel[]) {
   localStorage.setItem(NOVELS_KEY, JSON.stringify(novels));
+  syncServerStorage({ novels });
 }
+export function deleteStoredNovel(novelId: string): Novel[] {
+  const currentNovels = getStoredNovels();
+  const updatedNovels = currentNovels.filter((n) => n.id !== novelId);
+  localStorage.setItem(NOVELS_KEY, JSON.stringify(updatedNovels));
+
+  // Also filter out its chapters, references, glossaries from local storage
+  const remainingChapters = getStoredChapters().filter((c) => c.novel_id !== novelId);
+  localStorage.setItem(CHAPTERS_KEY, JSON.stringify(remainingChapters));
+
+  const remainingRefs = getAllStoredReferences().filter((r) => r.novel_id !== novelId);
+  localStorage.setItem(REFERENCES_KEY, JSON.stringify(remainingRefs));
+
+  const remainingGloss = getAllStoredGlossaries().filter((g) => g.novel_id !== novelId);
+  localStorage.setItem(GLOSSARIES_KEY, JSON.stringify(remainingGloss));
+
+  // Explicitly notify server to delete novel and physical folder on disk
+  fetch('/api/storage/delete-novel', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ novel_id: novelId }),
+  }).catch((err) => console.warn('Failed deleting novel on server:', err));
+
+  return updatedNovels;
+}
+
+export function renameStoredNovel(novelId: string, newTitle: string): Novel[] {
+  const currentNovels = getStoredNovels();
+  const updatedNovels = currentNovels.map((n) =>
+    n.id === novelId ? { ...n, judul: newTitle, updatedAt: new Date().toISOString() } : n
+  );
+  localStorage.setItem(NOVELS_KEY, JSON.stringify(updatedNovels));
+
+  fetch('/api/storage/rename-novel', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ novel_id: novelId, new_title: newTitle }),
+  }).catch((err) => console.warn('Failed renaming novel on server:', err));
+
+  return updatedNovels;
+}
+
 
 export function getStoredChapters(novelId?: string): Chapter[] {
   const data = localStorage.getItem(CHAPTERS_KEY);
@@ -260,42 +365,79 @@ export function getStoredChapters(novelId?: string): Chapter[] {
 
 export function saveStoredChapters(chapters: Chapter[]) {
   localStorage.setItem(CHAPTERS_KEY, JSON.stringify(chapters));
+  syncServerStorage({ chapters });
+}
+export function deleteStoredChapter(chapterId: string, novelId?: string): Chapter[] {
+  const allChapters = getStoredChapters();
+  const updatedAll = allChapters.filter((c) => c.id !== chapterId);
+  localStorage.setItem(CHAPTERS_KEY, JSON.stringify(updatedAll));
+
+  // Explicitly notify server to unlink file
+  fetch('/api/storage/delete-chapter', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chapter_id: chapterId, novel_id: novelId }),
+  }).catch((err) => console.warn('Failed deleting chapter on server:', err));
+
+  if (novelId) {
+    return updatedAll.filter((c) => c.novel_id === novelId);
+  }
+  return updatedAll;
+}
+
+
+export function getAllStoredReferences(): ReferenceItem[] {
+  const data = localStorage.getItem(REFERENCES_KEY);
+  if (!data) return initialReferences;
+  try {
+    return JSON.parse(data);
+  } catch {
+    return initialReferences;
+  }
 }
 
 export function getStoredReferences(novelId: string): ReferenceItem[] {
-  const data = localStorage.getItem(REFERENCES_KEY);
-  let refs: ReferenceItem[] = initialReferences;
-  if (data) {
-    try {
-      refs = JSON.parse(data);
-    } catch {
-      refs = initialReferences;
-    }
-  } else {
-    localStorage.setItem(REFERENCES_KEY, JSON.stringify(initialReferences));
-  }
-  return refs.filter((r) => r.novel_id === novelId);
+  const allRefs = getAllStoredReferences();
+  return allRefs.filter((r) => r.novel_id === novelId);
 }
 
-export function saveStoredReferences(refs: ReferenceItem[]) {
-  localStorage.setItem(REFERENCES_KEY, JSON.stringify(refs));
+export function saveStoredReferences(refs: ReferenceItem[], novelId?: string) {
+  const targetId = novelId || (refs.length > 0 ? refs[0].novel_id : undefined);
+  if (targetId) {
+    const all = getAllStoredReferences().filter((r) => r.novel_id !== targetId);
+    const merged = [...all, ...refs];
+    localStorage.setItem(REFERENCES_KEY, JSON.stringify(merged));
+    syncServerStorage({ references: merged });
+  } else {
+    localStorage.setItem(REFERENCES_KEY, JSON.stringify(refs));
+    syncServerStorage({ references: refs });
+  }
+}
+
+export function getAllStoredGlossaries(): GlossaryItem[] {
+  const data = localStorage.getItem(GLOSSARIES_KEY);
+  if (!data) return initialGlossaries;
+  try {
+    return JSON.parse(data);
+  } catch {
+    return initialGlossaries;
+  }
 }
 
 export function getStoredGlossaries(novelId: string): GlossaryItem[] {
-  const data = localStorage.getItem(GLOSSARIES_KEY);
-  let gloss: GlossaryItem[] = initialGlossaries;
-  if (data) {
-    try {
-      gloss = JSON.parse(data);
-    } catch {
-      gloss = initialGlossaries;
-    }
-  } else {
-    localStorage.setItem(GLOSSARIES_KEY, JSON.stringify(initialGlossaries));
-  }
-  return gloss.filter((g) => g.novel_id === novelId);
+  const allGloss = getAllStoredGlossaries();
+  return allGloss.filter((g) => g.novel_id === novelId);
 }
 
-export function saveStoredGlossaries(gloss: GlossaryItem[]) {
-  localStorage.setItem(GLOSSARIES_KEY, JSON.stringify(gloss));
+export function saveStoredGlossaries(gloss: GlossaryItem[], novelId?: string) {
+  const targetId = novelId || (gloss.length > 0 ? gloss[0].novel_id : undefined);
+  if (targetId) {
+    const all = getAllStoredGlossaries().filter((g) => g.novel_id !== targetId);
+    const merged = [...all, ...gloss];
+    localStorage.setItem(GLOSSARIES_KEY, JSON.stringify(merged));
+    syncServerStorage({ glossaries: merged });
+  } else {
+    localStorage.setItem(GLOSSARIES_KEY, JSON.stringify(gloss));
+    syncServerStorage({ glossaries: gloss });
+  }
 }

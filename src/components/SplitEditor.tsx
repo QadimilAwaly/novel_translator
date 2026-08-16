@@ -1,19 +1,20 @@
 import React, { useState } from 'react';
 import {
-  Wand2,
-  Sparkles,
   Copy,
   Check,
   Download,
+  Sparkles,
+  Wand2,
+  RefreshCw,
   Eye,
   Edit3,
   AArrowUp,
   AArrowDown,
-  RefreshCw,
   BookMarked,
   Info,
   Languages,
-  ArrowRightLeft
+  ArrowRightLeft,
+  Plus
 } from 'lucide-react';
 import { Chapter, Novel, ChapterStatus, LanguageCode, SUPPORTED_LANGUAGES } from '../types';
 
@@ -25,6 +26,8 @@ interface SplitEditorProps {
   onTranslateChapter: () => void;
   onExtractGlossary: () => void;
   onUpdateNovelLanguages?: (source: LanguageCode, target: LanguageCode) => void;
+  onAddNovel?: () => void;
+  onAddChapter?: () => void;
   isTranslating: boolean;
   isExtracting: boolean;
   promptStats?: {
@@ -32,7 +35,6 @@ interface SplitEditorProps {
     hasReference: boolean;
   };
 }
-
 export const SplitEditor: React.FC<SplitEditorProps> = ({
   activeNovel,
   activeChapter,
@@ -41,6 +43,8 @@ export const SplitEditor: React.FC<SplitEditorProps> = ({
   onTranslateChapter,
   onExtractGlossary,
   onUpdateNovelLanguages,
+  onAddNovel,
+  onAddChapter,
   isTranslating,
   isExtracting,
   promptStats,
@@ -49,16 +53,48 @@ export const SplitEditor: React.FC<SplitEditorProps> = ({
   const [viewMode, setViewMode] = useState<'editor' | 'preview'>('editor');
   const [fontSize, setFontSize] = useState<'sm' | 'base' | 'lg'>('base');
 
-  if (!activeNovel || !activeChapter) {
+  if (!activeNovel) {
     return (
       <div className="flex-1 bg-[#111318] flex flex-col items-center justify-center p-8 text-center text-gray-400 select-none">
         <div className="w-16 h-16 rounded-lg bg-[#16181D] border border-gray-800 flex items-center justify-center mb-4 text-indigo-400 shadow-xl">
           <BookMarked className="w-8 h-8" />
         </div>
-        <h2 className="text-base font-bold text-gray-200">Tidak Ada Chapter Dipilih</h2>
-        <p className="text-xs text-gray-500 max-w-md mt-1">
-          Pilih salah satu novel dan chapter di panel kiri, atau buat chapter baru untuk mulai menerjemahkan.
+        <h2 className="text-base font-bold text-gray-200">Tidak Ada Novel Dipilih</h2>
+        <p className="text-xs text-gray-500 max-w-md mt-1 mb-4">
+          Pilih salah satu novel di panel perpustakaan atau buat novel baru untuk memulai.
         </p>
+        {onAddNovel && (
+          <button
+            onClick={onAddNovel}
+            className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-md text-xs font-semibold shadow-lg shadow-indigo-600/20 transition-all active:scale-[0.98]"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Tambah Novel Baru</span>
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  if (!activeChapter) {
+    return (
+      <div className="flex-1 bg-[#111318] flex flex-col items-center justify-center p-8 text-center text-gray-400 select-none">
+        <div className="w-16 h-16 rounded-lg bg-[#16181D] border border-gray-800 flex items-center justify-center mb-4 text-indigo-400 shadow-xl">
+          <BookMarked className="w-8 h-8" />
+        </div>
+        <h2 className="text-base font-bold text-gray-200">{activeNovel.judul}</h2>
+        <p className="text-xs text-gray-500 max-w-md mt-1 mb-4">
+          Belum ada bab yang dipilih. Pilih bab di panel kiri atau buat bab baru.
+        </p>
+        {onAddChapter && (
+          <button
+            onClick={onAddChapter}
+            className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-md text-xs font-semibold shadow-lg shadow-indigo-600/20 transition-all active:scale-[0.98]"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Tambah Bab Baru</span>
+          </button>
+        )}
       </div>
     );
   }
@@ -96,7 +132,7 @@ export const SplitEditor: React.FC<SplitEditorProps> = ({
   }[fontSize];
 
   return (
-    <div className="flex-1 bg-[#111318] flex flex-col h-full overflow-hidden text-gray-200">
+    <div className="flex-1 bg-[#111318] flex flex-col h-full overflow-hidden text-gray-200 min-w-0 min-h-0">
       {/* Top Action Bar */}
       <div className="p-3 bg-[#16181D] border-b border-gray-800 flex flex-wrap items-center justify-between gap-3 shadow-sm select-none">
         {/* Left: Chapter Title & Status Dropdown */}
@@ -219,9 +255,9 @@ export const SplitEditor: React.FC<SplitEditorProps> = ({
       </div>
 
       {/* Split Editor Body */}
-      <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-px bg-gray-800 overflow-hidden">
+      <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-px bg-gray-800 overflow-hidden min-h-0">
         {/* Left Column: Teks Asli */}
-        <div className="flex flex-col h-full bg-[#111318] p-4">
+        <div className="flex flex-col h-full bg-[#111318] p-4 min-h-0 overflow-hidden">
           <div className="mb-3 flex items-center justify-between text-xs text-gray-400 select-none">
             <div className="flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-gray-500"></span>
@@ -256,7 +292,7 @@ export const SplitEditor: React.FC<SplitEditorProps> = ({
         </div>
 
         {/* Right Column: Teks Terjemahan LLM */}
-        <div className="flex flex-col h-full bg-[#111318] p-4 border-l border-gray-800 relative">
+        <div className="flex flex-col h-full bg-[#111318] p-4 border-l border-gray-800 relative min-h-0 overflow-hidden">
           <div className="mb-3 flex items-center justify-between text-xs text-gray-400 select-none">
             <div className="flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>

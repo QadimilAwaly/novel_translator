@@ -11,7 +11,8 @@ import {
   FileText,
   Tag,
   Sparkles,
-  Info
+  Info,
+  X
 } from 'lucide-react';
 import {
   Novel,
@@ -34,6 +35,7 @@ interface ContextPanelProps {
   onAddGlossaryItem: (item: Omit<GlossaryItem, 'id' | 'novel_id'>) => void;
   onDeleteGlossaryItem: (id: string) => void;
   onOpenNewGlossaryModal: () => void;
+  onClose?: () => void;
 }
 
 export const ContextPanel: React.FC<ContextPanelProps> = ({
@@ -46,8 +48,10 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({
   onChangeWritingStyle,
   onAddReferenceItem,
   onDeleteReferenceItem,
+  onAddGlossaryItem,
   onDeleteGlossaryItem,
   onOpenNewGlossaryModal,
+  onClose,
 }) => {
   const [activeTab, setActiveTab] = useState<'reference' | 'glossary'>('glossary');
   const [glossaryCategory, setGlossaryCategory] = useState<string>('Semua');
@@ -62,7 +66,16 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({
 
   if (!activeNovel) {
     return (
-      <aside className="w-full lg:w-80 bg-[#16181D] border-l border-gray-800 flex flex-col h-full text-gray-200 select-none p-4 justify-center items-center text-center">
+      <aside className="fixed lg:static inset-y-0 right-0 z-40 w-80 sm:w-96 max-w-[85vw] lg:max-w-none lg:w-80 bg-[#16181D] border-l border-gray-800 flex flex-col h-full text-gray-200 select-none p-4 justify-center items-center text-center shadow-2xl lg:shadow-none animate-in slide-in-from-right duration-200">
+        {onClose && (
+          <button
+            onClick={onClose}
+            className="absolute top-4 right-4 p-1 hover:bg-gray-800 rounded text-gray-400 hover:text-gray-200 transition-colors lg:hidden"
+            title="Tutup Panel Context"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
         <BookOpen className="w-8 h-8 text-gray-600 mb-2" />
         <p className="text-xs text-gray-400">Pilih novel untuk mengelola memori konteks.</p>
       </aside>
@@ -99,9 +112,9 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({
   const categoriesList: GlossaryCategory[] = ['Nama', 'Tempat', 'Jurus/Sekte', 'Item', 'Istilah Khusus'];
 
   return (
-    <aside className="w-full lg:w-80 bg-[#16181D] border-l border-gray-800 flex flex-col h-full text-gray-200 select-none shrink-0">
+    <aside className="fixed lg:static inset-y-0 right-0 z-40 w-80 sm:w-96 max-w-[85vw] lg:max-w-none lg:w-80 bg-[#16181D] border-l border-gray-800 flex flex-col h-full text-gray-200 select-none shrink-0 shadow-2xl lg:shadow-none animate-in slide-in-from-right duration-200">
       {/* Panel Tab Header */}
-      <div className="flex border-b border-gray-800 bg-[#0F1113]">
+      <div className="flex border-b border-gray-800 bg-[#0F1113] items-center">
         <button
           onClick={() => setActiveTab('glossary')}
           className={`flex-1 py-3 text-[10px] font-bold uppercase tracking-widest border-b-2 transition-all flex items-center justify-center gap-1.5 ${
@@ -125,6 +138,16 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({
           <BookMarked className="w-3.5 h-3.5 text-indigo-400" />
           <span>Reference</span>
         </button>
+
+        {onClose && (
+          <button
+            onClick={onClose}
+            className="p-2 hover:bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors lg:hidden mr-1"
+            title="Tutup Panel Context"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
       </div>
 
       {/* Tab Body: GLOSSARY */}

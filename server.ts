@@ -340,6 +340,496 @@ async function startServer() {
     };
   };
 
+  // Helper: Persistent Server-Backed Novel & Metadata Storage
+  const getLibraryStorageDir = (): string => {
+    const config = readConfig();
+    const rawPath = config.global_storage_path || path.join(process.cwd(), 'Novel_Library');
+    const resolved = path.isAbsolute(rawPath) ? path.resolve(rawPath) : path.resolve(process.cwd(), rawPath);
+    if (!fs.existsSync(resolved)) {
+      try {
+        fs.mkdirSync(resolved, { recursive: true });
+      } catch (err) {
+        console.error('Failed creating library directory:', err);
+      }
+    }
+    return resolved;
+  };
+
+  const getLibraryIndexFilePath = (): string => {
+    return path.join(getLibraryStorageDir(), 'library_index.json');
+  };
+
+  interface StoredNovel {
+    id: string;
+    judul: string;
+    folder_path: string;
+    bahasa_sumber: string;
+    bahasa_target: string;
+    createdAt: string;
+    updatedAt: string;
+  }
+
+  interface StoredChapter {
+    id: string;
+    novel_id: string;
+    nomor_chapter: number;
+    judul_chapter: string;
+    teks_asli: string;
+    teks_terjemahan: string;
+    status_pengerjaan: string;
+    createdAt: string;
+    updatedAt: string;
+  }
+
+  interface StoredReference {
+    id: string;
+    novel_id: string;
+    kategori: string;
+    nama_item: string;
+    deskripsi: string;
+  }
+
+  interface StoredGlossary {
+    id: string;
+    novel_id: string;
+    istilah_asli: string;
+    istilah_terjemahan: string;
+    kategori: string;
+    konteks?: string;
+  }
+
+  const parseNovelFolderDisk = (folderPath: string, folderName: string): {
+    novel: StoredNovel;
+    chapters: StoredChapter[];
+    references: StoredReference[];
+    glossaries: StoredGlossary[];
+  } => {
+    const novelId = `novel-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
+    let refJson: {
+      novel_title?: string;
+      source_language?: string;
+      target_language?: string;
+      synopsis?: string;
+      writing_style?: string;
+      reference_items?: StoredReference[];
+      updated_at?: string;
+    } | null = null;
+    let glossJson: Array<{ istilah_asli: string; istilah_terjemahan: string; kategori?: string; konteks?: string }> = [];
+
+    const refPath = path.join(folderPath, 'metadata', 'reference.json');
+    if (fs.existsSync(refPath)) {
+      try {
+        refJson = JSON.parse(fs.readFileSync(refPath, 'utf-8'));
+      } catch (e) {}
+    }
+
+    const glosPath = path.join(folderPath, 'metadata', 'glossary.json');
+    if (fs.existsSync(glosPath)) {
+      try {
+        glossJson = JSON.parse(fs.readFileSync(glosPath, 'utf-8'));
+      } catch (e) {}
+    }
+
+    const novel: StoredNovel = {
+      id: novelId,
+      judul: refJson?.novel_title || folderName.replace(/_/g, ' '),
+      folder_path: folderPath,
+      bahasa_sumber: refJson?.source_language || 'Mandarin',
+      bahasa_target: refJson?.target_language || 'Indonesia',
+      createdAt: refJson?.updated_at || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const references: StoredReference[] = [];
+    if (refJson?.synopsis) {
+      references.push({
+        id: `ref-${novelId}-synopsis`,
+        novel_id: novelId,
+        kategori: 'Sinopsis',
+        nama_item: 'Sinopsis Utama',
+        deskripsi: refJson.synopsis,
+      });
+    }
+    if (refJson?.writing_style) {
+      references.push({
+        id: `ref-${novelId}-style`,
+        novel_id: novelId,
+        kategori: 'Gaya Bahasa',
+        nama_item: 'Gaya Bahasa',
+        deskripsi: refJson.writing_style,
+      });
+    }
+    if (Array.isArray(refJson?.reference_items)) {
+      refJson.reference_items.forEach((item, idx) => {
+        references.push({
+          id: item.id || `ref-${novelId}-${idx}`,
+          novel_id: novelId,
+          kategori: item.kategori || 'Karakter',
+          nama_item: item.nama_item || 'Item ' + (idx + 1),
+          deskripsi: item.deskripsi || '',
+        });
+      });
+    }
+
+    const glossaries: StoredGlossary[] = [];
+    if (Array.isArray(glossJson)) {
+      glossJson.forEach((g, idx) => {
+        glossaries.push({
+          id: `glos-${novelId}-${idx}`,
+          novel_id: novelId,
+          istilah_asli: g.istilah_asli,
+          istilah_terjemahan: g.istilah_terjemahan,
+          kategori: g.kategori || 'Istilah Khusus',
+          konteks: g.konteks || '',
+        });
+      });
+    }
+
+    const chapters: StoredChapter[] = [];
+    try {
+      const files = fs.readdirSync(folderPath);
+      files.forEach((file) => {
+        if (file.startsWith('.') || file === 'metadata') return;
+        const filePath = path.join(folderPath, file);
+        if (!fs.statSync(filePath).isFile()) return;
+
+        if (file.endsWith('.md') || file.endsWith('.txt')) {
+          const content = fs.readFileSync(filePath, 'utf-8');
+          const numMatch = file.match(/(\d+)/);
+          const nomorChapter = numMatch ? parseInt(numMatch[1], 10) : chapters.length + 1;
+
+          let title = file.replace(/\.[^/.]+$/, '');
+          const titleLineMatch = content.match(/^#\s*(?:Chapter\s*\d+:\s*)?(.*)$/m);
+          if (titleLineMatch && titleLineMatch[1].trim()) {
+            title = titleLineMatch[1].trim();
+          }
+
+          let originalText = content;
+          let translatedText = '';
+          let statusPengerjaan = 'Belum';
+
+          const statusMatch = content.match(/>\s*\*\*Status:\*\*\s*([^\n\r]+)/);
+          if (statusMatch && statusMatch[1].trim()) {
+            const rawStatus = statusMatch[1].trim();
+            if (rawStatus.toLowerCase().includes('selesai')) statusPengerjaan = 'Selesai';
+            else if (rawStatus.toLowerCase().includes('sedang')) statusPengerjaan = 'Sedang';
+          }
+
+          if (content.includes('## Hasil Terjemahan') || content.includes('## Teks Terjemahan')) {
+            const transMatch = content.match(/## (?:Hasil Terjemahan|Teks Terjemahan)\s*\([^)]*\)\s*\n([\s\S]*?)(?=\n---\n|\n## Teks Asli|$)/);
+            if (transMatch) {
+              translatedText = transMatch[1].trim();
+            }
+          }
+
+          if (content.includes('## Teks Asli')) {
+            const origMatch = content.match(/## Teks Asli\s*\([^)]*\)\s*\n([\s\S]*?)(?=$)/);
+            if (origMatch) {
+              originalText = origMatch[1].trim();
+            }
+          }
+
+          if (!translatedText && content.includes('*(Belum diterjemahkan)*')) {
+            translatedText = '';
+          }
+
+          if (translatedText.length > 0 && statusPengerjaan === 'Belum') {
+            statusPengerjaan = 'Selesai';
+          }
+
+          chapters.push({
+            id: `chap-${novelId}-${nomorChapter}-${Date.now().toString(36)}`,
+            novel_id: novelId,
+            nomor_chapter: nomorChapter,
+            judul_chapter: title,
+            teks_asli: originalText,
+            teks_terjemahan: translatedText,
+            status_pengerjaan: statusPengerjaan,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          });
+        }
+      });
+    } catch (err) {
+      console.error(`Error reading chapters from ${folderPath}:`, err);
+    }
+
+    chapters.sort((a, b) => a.nomor_chapter - b.nomor_chapter);
+    return { novel, chapters, references, glossaries };
+  };
+
+  const scanAndSyncNovelFolders = (currentData: {
+    novels: StoredNovel[];
+    chapters: StoredChapter[];
+    references: StoredReference[];
+    glossaries: StoredGlossary[];
+    last_updated: string;
+  }) => {
+    let hasChanges = false;
+    try {
+      const libraryBase = getLibraryStorageDir();
+      if (!fs.existsSync(libraryBase)) return currentData;
+
+      const entries = fs.readdirSync(libraryBase);
+      for (const entry of entries) {
+        if (entry.startsWith('.')) continue;
+        const entryPath = path.join(libraryBase, entry);
+        if (!fs.statSync(entryPath).isDirectory()) continue;
+
+        // Check if novel already indexed
+        const existingNovel = currentData.novels.find((n) => {
+          if (!n) return false;
+          if (n.folder_path && (n.folder_path === entryPath || path.resolve(n.folder_path) === path.resolve(entryPath))) {
+            return true;
+          }
+          const cleanJudul = sanitizeFilename(n.judul || '');
+          if (cleanJudul.toLowerCase() === entry.toLowerCase() || entry.toLowerCase().includes(cleanJudul.toLowerCase())) {
+            return true;
+          }
+          if (entry.toLowerCase().replace(/_/g, ' ') === (n.judul || '').toLowerCase()) {
+            return true;
+          }
+          return false;
+        });
+
+        if (!existingNovel) {
+          // New novel folder found on disk!
+          const parsed = parseNovelFolderDisk(entryPath, entry);
+          currentData.novels.push(parsed.novel);
+          currentData.chapters.push(...parsed.chapters);
+          currentData.references.push(...parsed.references);
+          currentData.glossaries.push(...parsed.glossaries);
+          hasChanges = true;
+        } else {
+          // Novel exists, check if chapters on disk need syncing
+          const existingChaps = currentData.chapters.filter((c) => c.novel_id === existingNovel.id);
+          if (existingChaps.length === 0) {
+            const parsed = parseNovelFolderDisk(entryPath, entry);
+            if (parsed.chapters.length > 0) {
+              parsed.chapters.forEach((c) => { c.novel_id = existingNovel.id; });
+              currentData.chapters.push(...parsed.chapters);
+              hasChanges = true;
+            }
+            if (currentData.glossaries.filter((g) => g.novel_id === existingNovel.id).length === 0 && parsed.glossaries.length > 0) {
+              parsed.glossaries.forEach((g) => { g.novel_id = existingNovel.id; });
+              currentData.glossaries.push(...parsed.glossaries);
+              hasChanges = true;
+            }
+            if (currentData.references.filter((r) => r.novel_id === existingNovel.id).length === 0 && parsed.references.length > 0) {
+              parsed.references.forEach((r) => { r.novel_id = existingNovel.id; });
+              currentData.references.push(...parsed.references);
+              hasChanges = true;
+            }
+          }
+        }
+      }
+
+      if (hasChanges) {
+        currentData.last_updated = new Date().toISOString();
+        const filePath = getLibraryIndexFilePath();
+        fs.writeFileSync(filePath, JSON.stringify(currentData, null, 2), 'utf-8');
+      }
+    } catch (scanErr) {
+      console.warn('Scan novel folders error:', scanErr);
+    }
+    return currentData;
+  };
+
+  const readLibraryStorage = () => {
+    const filePath = getLibraryIndexFilePath();
+    let data: {
+      novels: StoredNovel[];
+      chapters: StoredChapter[];
+      references: StoredReference[];
+      glossaries: StoredGlossary[];
+      last_updated: string;
+    } | null = null;
+
+    try {
+      if (fs.existsSync(filePath)) {
+        const raw = fs.readFileSync(filePath, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (parsed && Array.isArray(parsed.novels)) {
+          data = {
+            novels: parsed.novels,
+            chapters: Array.isArray(parsed.chapters) ? parsed.chapters : [],
+            references: Array.isArray(parsed.references) ? parsed.references : [],
+            glossaries: Array.isArray(parsed.glossaries) ? parsed.glossaries : [],
+            last_updated: parsed.last_updated || new Date().toISOString(),
+          };
+        }
+      }
+    } catch (err) {
+      console.error('Error reading library_index.json:', err);
+    }
+
+    if (!data) {
+      data = {
+        novels: [],
+        chapters: [],
+        references: [],
+        glossaries: [],
+        last_updated: new Date().toISOString(),
+      };
+    }
+
+    // Always scan and sync physical novel folders on disk
+    return scanAndSyncNovelFolders(data);
+  };
+
+  const saveLibraryStorage = (data: {
+    novels?: StoredNovel[];
+    chapters?: StoredChapter[];
+    references?: StoredReference[];
+    glossaries?: StoredGlossary[];
+  }) => {
+    const current = readLibraryStorage();
+    const newNovels = Array.isArray(data.novels) ? data.novels : current.novels;
+    const libraryBase = getLibraryStorageDir();
+
+    // 1. Detect deleted novels and remove physical folders on disk!
+    if (Array.isArray(data.novels)) {
+      const remainingIds = new Set(newNovels.map((n) => n.id));
+      const deletedNovels = current.novels.filter((n) => !remainingIds.has(n.id));
+
+      for (const delNovel of deletedNovels) {
+        const cleanTitle = sanitizeFilename(delNovel.judul || 'Novel_' + delNovel.id);
+        const folderByName = path.join(libraryBase, cleanTitle);
+        const folderByPath = delNovel.folder_path ? path.resolve(delNovel.folder_path) : '';
+
+        if (folderByPath && fs.existsSync(folderByPath)) {
+          try {
+            fs.rmSync(folderByPath, { recursive: true, force: true });
+          } catch (rmErr) {
+            console.error('Error removing folderByPath:', rmErr);
+          }
+        }
+        if (folderByName && fs.existsSync(folderByName) && folderByName !== folderByPath) {
+          try {
+            fs.rmSync(folderByName, { recursive: true, force: true });
+          } catch (rmErr) {
+            console.error('Error removing folderByName:', rmErr);
+          }
+        }
+      }
+
+      // Also clean up chapters, references, glossaries of deleted novels
+      data.chapters = (data.chapters || current.chapters).filter((c) => remainingIds.has(c.novel_id));
+      data.references = (data.references || current.references).filter((r) => remainingIds.has(r.novel_id));
+      data.glossaries = (data.glossaries || current.glossaries).filter((g) => remainingIds.has(g.novel_id));
+    }
+
+    // 2. Detect deleted chapters and unlink files on disk
+    if (Array.isArray(data.chapters)) {
+      const remainingChapIds = new Set(data.chapters.map((c) => c.id));
+      const deletedChapters = current.chapters.filter((c) => !remainingChapIds.has(c.id));
+
+      for (const delChap of deletedChapters) {
+        const parentNovel = newNovels.find((n) => n.id === delChap.novel_id);
+        if (parentNovel) {
+          const cleanNovelTitle = sanitizeFilename(parentNovel.judul || 'Novel_' + parentNovel.id);
+          const novelFolder = parentNovel.folder_path && fs.existsSync(parentNovel.folder_path)
+            ? path.resolve(parentNovel.folder_path)
+            : path.join(libraryBase, cleanNovelTitle);
+          const padNum = String(Number(delChap.nomor_chapter) || 1).padStart(2, '0');
+          const chapFilePath = path.join(novelFolder, `Chapter_${padNum}.md`);
+          if (fs.existsSync(chapFilePath)) {
+            try {
+              fs.unlinkSync(chapFilePath);
+            } catch (unlinkErr) {
+              console.error('Error unlinking deleted chapter file:', unlinkErr);
+            }
+          }
+        }
+      }
+    }
+
+    // 3. Detect renamed novels and rename physical directory
+    if (Array.isArray(data.novels)) {
+      for (const novel of newNovels) {
+        const oldNovel = current.novels.find((n) => n.id === novel.id);
+        if (oldNovel && oldNovel.judul !== novel.judul) {
+          const oldCleanTitle = sanitizeFilename(oldNovel.judul || 'Novel_' + oldNovel.id);
+          const newCleanTitle = sanitizeFilename(novel.judul || 'Novel_' + novel.id);
+          const oldFolder = path.join(libraryBase, oldCleanTitle);
+          const newFolder = path.join(libraryBase, newCleanTitle);
+
+          if (fs.existsSync(oldFolder) && !fs.existsSync(newFolder)) {
+            try {
+              fs.renameSync(oldFolder, newFolder);
+              novel.folder_path = newFolder;
+            } catch (renErr) {
+              console.error('Error renaming novel folder on disk:', renErr);
+            }
+          }
+        }
+      }
+    }
+
+    const updated = {
+      novels: newNovels,
+      chapters: Array.isArray(data.chapters) ? data.chapters : current.chapters,
+      references: Array.isArray(data.references) ? data.references : current.references,
+      glossaries: Array.isArray(data.glossaries) ? data.glossaries : current.glossaries,
+      last_updated: new Date().toISOString(),
+    };
+
+    const filePath = getLibraryIndexFilePath();
+    fs.writeFileSync(filePath, JSON.stringify(updated, null, 2), 'utf-8');
+
+    // Auto-sync physical folders for existing novels
+    try {
+      for (const novel of updated.novels) {
+        const cleanTitle = sanitizeFilename(novel.judul || 'Novel_' + novel.id);
+        const novelFolder = path.join(libraryBase, cleanTitle);
+        if (!fs.existsSync(novelFolder)) {
+          fs.mkdirSync(novelFolder, { recursive: true });
+        }
+        const metadataFolder = path.join(novelFolder, 'metadata');
+        if (!fs.existsSync(metadataFolder)) {
+          fs.mkdirSync(metadataFolder, { recursive: true });
+        }
+
+        const novelRefs = updated.references.filter((r: StoredReference) => r.novel_id === novel.id);
+        const novelGloss = updated.glossaries.filter((g: StoredGlossary) => g.novel_id === novel.id);
+        const novelChaps = updated.chapters.filter((c: StoredChapter) => c.novel_id === novel.id);
+
+        const synopsisItem = novelRefs.find((r: StoredReference) => r.nama_item?.toLowerCase().includes('sinopsis') || r.kategori === 'Sinopsis');
+        const styleItem = novelRefs.find((r: StoredReference) => r.kategori === 'Gaya Bahasa');
+
+        // Write metadata/reference.json
+        const refPayload = {
+          novel_title: novel.judul,
+          source_language: novel.bahasa_sumber,
+          target_language: novel.bahasa_target,
+          synopsis: synopsisItem?.deskripsi || '',
+          writing_style: styleItem?.deskripsi || '',
+          reference_items: novelRefs,
+          updated_at: new Date().toISOString(),
+        };
+        fs.writeFileSync(path.join(metadataFolder, 'reference.json'), JSON.stringify(refPayload, null, 2), 'utf-8');
+
+        // Write metadata/glossary.json
+        fs.writeFileSync(path.join(metadataFolder, 'glossary.json'), JSON.stringify(novelGloss, null, 2), 'utf-8');
+
+        // Write Chapter Markdown files
+        for (const chap of novelChaps) {
+          const padNum = String(Number(chap.nomor_chapter) || 1).padStart(2, '0');
+          const safeChapTitle = sanitizeFilename(chap.judul_chapter || 'Chapter ' + chap.nomor_chapter);
+          const chapPath = path.join(novelFolder, `Chapter_${padNum}.md`);
+          const divider = '---';
+          const mdContent = `# Chapter ${chap.nomor_chapter}: ${safeChapTitle}\n\n> **Novel:** ${sanitizeFilename(novel.judul)}\n> **Status:** ${chap.status_pengerjaan}\n> **Bahasa:** ${novel.bahasa_sumber} -> ${novel.bahasa_target}\n> **Updated:** ${new Date().toLocaleString()}\n\n${divider}\n\n## Hasil Terjemahan (${novel.bahasa_target})\n\n${chap.teks_terjemahan || '*(Belum diterjemahkan)*'}\n\n${divider}\n\n## Teks Asli (${novel.bahasa_sumber})\n\n${chap.teks_asli || '*(Kosong)*'}\n`;
+          fs.writeFileSync(chapPath, mdContent, 'utf-8');
+        }
+      }
+    } catch (syncErr) {
+      console.warn('Physical folder auto-sync warning:', syncErr);
+    }
+
+    return updated;
+  };
+
   // API Route: Health Check
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', time: new Date().toISOString() });
@@ -358,8 +848,10 @@ async function startServer() {
       // Hanya izinkan field yang dikenal; jangan terima path sesuka hati (audit #1, #6)
       const updated: Record<string, unknown> = { ...current };
       if (typeof body.global_storage_path === 'string') {
-        const safe = resolveSafePath(body.global_storage_path, path.join(process.cwd(), 'Novel_Library'));
-        if (safe) updated.global_storage_path = body.global_storage_path;
+        const raw = body.global_storage_path.trim();
+        if (raw && !raw.includes('\0')) {
+          updated.global_storage_path = raw;
+        }
       }
       if (typeof body.default_provider === 'string') updated.default_provider = body.default_provider;
       if (typeof body.default_model === 'string') updated.default_model = body.default_model;
@@ -367,9 +859,109 @@ async function startServer() {
       if (body.openrouter_api_key !== undefined) updated.openrouter_api_key = String(body.openrouter_api_key);
       fs.writeFileSync(CONFIG_PATH, JSON.stringify(updated, null, 2), 'utf-8');
       res.json({ status: 'success', config: getSafeConfig() });
-    } catch (error: any) {
-      console.error('Error saving config.json:', error);
+    } catch (error: unknown) {
+      const errMessage = error instanceof Error ? error.message : 'Gagal menyimpan config.json';
+      console.error('Error saving config.json:', errMessage);
       res.status(500).json({ error: 'Gagal menyimpan config.json' });
+    }
+  });
+  // API Route: Get Server-Backed Master Storage
+  app.get('/api/storage', rateLimit(100, 60000), (req, res) => {
+    try {
+      const data = readLibraryStorage();
+      res.json({ status: 'success', data });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Gagal membaca storage';
+      console.error('Error fetching storage:', msg);
+      res.status(500).json({ error: 'Gagal membaca data perpustakaan novel dari server.' });
+    }
+  });
+
+  // API Route: Sync Full/Partial Storage to Disk
+  app.post('/api/storage/sync', rateLimit(60, 60000), (req, res) => {
+    try {
+      const updated = saveLibraryStorage(req.body || {});
+      res.json({ status: 'success', data: updated });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Gagal sinkronisasi storage';
+      console.error('Error syncing storage:', msg);
+      res.status(500).json({ error: 'Gagal menyinkronkan data ke disk server.' });
+    }
+  });
+  // API Route: Delete Novel and its Physical Folder on Disk
+  app.post('/api/storage/delete-novel', rateLimit(60, 60000), (req, res) => {
+    try {
+      const { novel_id } = req.body || {};
+      if (!novel_id || typeof novel_id !== 'string') {
+        return res.status(400).json({ error: 'novel_id wajib disertakan.' });
+      }
+
+      const current = readLibraryStorage();
+      const updatedNovels = current.novels.filter((n) => n.id !== novel_id);
+      const updatedChapters = current.chapters.filter((c) => c.novel_id !== novel_id);
+      const updatedReferences = current.references.filter((r) => r.novel_id !== novel_id);
+      const updatedGlossaries = current.glossaries.filter((g) => g.novel_id !== novel_id);
+
+      const updated = saveLibraryStorage({
+        novels: updatedNovels,
+        chapters: updatedChapters,
+        references: updatedReferences,
+        glossaries: updatedGlossaries,
+      });
+
+      res.json({ status: 'success', data: updated });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Gagal menghapus novel';
+      console.error('Error deleting novel from storage:', msg);
+      res.status(500).json({ error: 'Gagal menghapus novel dari disk server.' });
+    }
+  });
+
+  // API Route: Delete Chapter and its Markdown file on Disk
+  app.post('/api/storage/delete-chapter', rateLimit(60, 60000), (req, res) => {
+    try {
+      const { chapter_id } = req.body || {};
+      if (!chapter_id || typeof chapter_id !== 'string') {
+        return res.status(400).json({ error: 'chapter_id wajib disertakan.' });
+      }
+
+      const current = readLibraryStorage();
+      const updatedChapters = current.chapters.filter((c) => c.id !== chapter_id);
+
+      const updated = saveLibraryStorage({
+        chapters: updatedChapters,
+      });
+
+      res.json({ status: 'success', data: updated });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Gagal menghapus bab';
+      console.error('Error deleting chapter from storage:', msg);
+      res.status(500).json({ error: 'Gagal menghapus bab dari disk server.' });
+    }
+  });
+
+  // API Route: Rename Novel and its Physical Directory on Disk
+  app.post('/api/storage/rename-novel', rateLimit(60, 60000), (req, res) => {
+    try {
+      const { novel_id, new_title } = req.body || {};
+      if (!novel_id || !new_title || typeof new_title !== 'string') {
+        return res.status(400).json({ error: 'novel_id dan new_title wajib disertakan.' });
+      }
+
+      const current = readLibraryStorage();
+      const updatedNovels = current.novels.map((n) =>
+        n.id === novel_id ? { ...n, judul: new_title.trim(), updatedAt: new Date().toISOString() } : n
+      );
+
+      const updated = saveLibraryStorage({
+        novels: updatedNovels,
+      });
+
+      res.json({ status: 'success', data: updated });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Gagal mengubah nama novel';
+      console.error('Error renaming novel in storage:', msg);
+      res.status(500).json({ error: 'Gagal mengubah nama novel di disk server.' });
     }
   });
   // API Route: Save Chapter to Physical Folder
@@ -460,6 +1052,119 @@ async function startServer() {
     } catch (error: any) {
       console.error('Error bulk exporting novel to disk:', error);
       res.status(500).json({ error: error.message || 'Gagal mengekstrak novel ke folder lokal.' });
+    }
+  });
+
+  // API Route: Scan & Import Existing Local Novel Folder
+  app.post('/api/import-novel-folder', rateLimit(30, 60000), (req, res) => {
+    try {
+      const { folder_path } = req.body;
+      if (!folder_path || typeof folder_path !== 'string') {
+        return res.status(400).json({ error: 'folder_path wajib diisi.' });
+      }
+
+      const basePath = path.join(process.cwd(), 'Novel_Library');
+      let targetFolder = resolveSafePath(folder_path, basePath);
+      if (!targetFolder && fs.existsSync(folder_path)) {
+        targetFolder = folder_path;
+      }
+
+      if (!targetFolder || !fs.existsSync(targetFolder)) {
+        return res.status(404).json({ error: `Folder "${folder_path}" tidak ditemukan.` });
+      }
+
+      // Read metadata/reference.json & metadata/glossary.json if exists
+      const metadataFolder = path.join(targetFolder, 'metadata');
+      let referenceJson: any = null;
+      let glossaryJson: any[] = [];
+
+      const refPath = path.join(metadataFolder, 'reference.json');
+      if (fs.existsSync(refPath)) {
+        try {
+          referenceJson = JSON.parse(fs.readFileSync(refPath, 'utf-8'));
+        } catch (e) {}
+      }
+
+      const glosPath = path.join(metadataFolder, 'glossary.json');
+      if (fs.existsSync(glosPath)) {
+        try {
+          glossaryJson = JSON.parse(fs.readFileSync(glosPath, 'utf-8'));
+        } catch (e) {}
+      }
+
+      // Scan directory for Chapter_*.md files or .txt/.md files
+      const files = fs.readdirSync(targetFolder);
+      const chapters: any[] = [];
+
+      files.forEach((file) => {
+        if (file.startsWith('.') || file === 'metadata') return;
+        const filePath = path.join(targetFolder, file);
+        const stat = fs.statSync(filePath);
+        if (!stat.isFile()) return;
+
+        if (file.endsWith('.md') || file.endsWith('.txt')) {
+          const content = fs.readFileSync(filePath, 'utf-8');
+
+          // Try matching chapter number from filename (e.g. Chapter_01.md or 01.txt)
+          const numMatch = file.match(/(\d+)/);
+          const nomorChapter = numMatch ? parseInt(numMatch[1], 10) : chapters.length + 1;
+
+          // Parse title and markdown sections if formatted
+          let title = file.replace(/\.[^/.]+$/, '');
+          const titleLineMatch = content.match(/^#\s*(?:Chapter\s*\d+:\s*)?(.*)$/m);
+          if (titleLineMatch && titleLineMatch[1].trim()) {
+            title = titleLineMatch[1].trim();
+          }
+
+          let originalText = content;
+          let translatedText = '';
+
+          // Parse split section format if present
+          if (content.includes('## Hasil Terjemahan') || content.includes('## Teks Terjemahan')) {
+            const transMatch = content.match(/## (?:Hasil Terjemahan|Teks Terjemahan)\s*\([^)]*\)\s*\n([\s\S]*?)(?=\n---\n|\n## Teks Asli|$)/);
+            if (transMatch) {
+              translatedText = transMatch[1].trim();
+            }
+          }
+
+          if (content.includes('## Teks Asli')) {
+            const origMatch = content.match(/## Teks Asli\s*\([^)]*\)\s*\n([\s\S]*?)(?=$)/);
+            if (origMatch) {
+              originalText = origMatch[1].trim();
+            }
+          }
+
+          chapters.push({
+            nomor_chapter: nomorChapter,
+            judul_chapter: title,
+            teks_asli: originalText,
+            teks_terjemahan: translatedText,
+            status_pengerjaan: translatedText.trim() ? 'Selesai' : 'Belum',
+          });
+        }
+      });
+
+      // Sort chapters by chapter number
+      chapters.sort((a, b) => a.nomor_chapter - b.nomor_chapter);
+
+      const folderName = path.basename(targetFolder);
+      const novelTitle = referenceJson?.novel_title || folderName.replace(/_/g, ' ');
+
+      res.json({
+        status: 'success',
+        folder_path: targetFolder,
+        novel_title: novelTitle,
+        source_language: referenceJson?.source_language || 'Mandarin',
+        target_language: referenceJson?.target_language || 'Indonesia',
+        synopsis: referenceJson?.synopsis || '',
+        writing_style: referenceJson?.writing_style || '',
+        reference_items: referenceJson?.reference_items || [],
+        glossaries: Array.isArray(glossaryJson) ? glossaryJson : [],
+        chapters,
+      });
+    } catch (error: any) {
+      console.error('Error importing novel folder:', error);
+      res.status(500).json({ error: error.message || 'Gagal mengimpor folder novel.' });
     }
   });
   // API Route: Translate Chapter (Phase 1 & 2 Context Assembly & Translation Execution)

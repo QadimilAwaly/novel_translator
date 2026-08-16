@@ -249,5 +249,94 @@ describe('Chapter ID Generation', () => {
     console.log('  Recommendation: Use crypto.randomUUID()');
   });
 });
+// ============================================================
+// TEST: Responsive Layout & Mobile Panel Visibility
+// ============================================================
+describe('Responsive Layout & Mobile Panel Visibility', () => {
+  test('App.tsx main container should not use flex-col that hides panels on small screens', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const appContent = fs.readFileSync(path.join(process.cwd(), 'src', 'App.tsx'), 'utf-8');
+    
+    // Check that main container does not use flex-col lg:flex-row which breaks small screens
+    assert.ok(!appContent.includes('flex flex-col lg:flex-row'), 'App.tsx should not use flex-col lg:flex-row on main container');
+    assert.ok(appContent.includes('flex flex-row') || appContent.includes('flex-row'), 'App.tsx should use flex-row on main container');
+    assert.ok(appContent.includes('backdrop'), 'App.tsx should include mobile backdrops for overlays');
+  });
+
+  test('NovelSidebar.tsx and ContextPanel.tsx should support responsive fixed/static overlay positioning', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const sidebarContent = fs.readFileSync(path.join(process.cwd(), 'src', 'components', 'NovelSidebar.tsx'), 'utf-8');
+    const contextContent = fs.readFileSync(path.join(process.cwd(), 'src', 'components', 'ContextPanel.tsx'), 'utf-8');
+
+    assert.ok(sidebarContent.includes('fixed lg:static'), 'NovelSidebar should use fixed on mobile and lg:static on desktop');
+    assert.ok(sidebarContent.includes('onClose'), 'NovelSidebar should support onClose prop');
+    assert.ok(contextContent.includes('fixed lg:static'), 'ContextPanel should use fixed on mobile and lg:static on desktop');
+    assert.ok(contextContent.includes('onClose'), 'ContextPanel should support onClose prop');
+  });
+
+  test('SplitEditor.tsx should have min-w-0 and min-h-0 to avoid overflow in small windows', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const splitContent = fs.readFileSync(path.join(process.cwd(), 'src', 'components', 'SplitEditor.tsx'), 'utf-8');
+
+    assert.ok(splitContent.includes('min-w-0'), 'SplitEditor should have min-w-0');
+    assert.ok(splitContent.includes('min-h-0'), 'SplitEditor should have min-h-0');
+  });
+});
+// ============================================================
+// TEST: Server-Backed Persistent Storage & Config Stability
+// ============================================================
+describe('Server-Backed Persistent Storage & Config Stability', () => {
+  test('server.ts should have /api/storage and /api/storage/sync endpoints', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const serverContent = fs.readFileSync(path.join(process.cwd(), 'server.ts'), 'utf-8');
+
+    assert.ok(serverContent.includes("app.get('/api/storage'"), 'server.ts should have GET /api/storage');
+    assert.ok(serverContent.includes("app.post('/api/storage/sync'"), 'server.ts should have POST /api/storage/sync');
+    assert.ok(serverContent.includes('library_index.json'), 'server.ts should persist to library_index.json');
+    assert.ok(serverContent.includes('readLibraryStorage'), 'server.ts should have readLibraryStorage');
+    assert.ok(serverContent.includes('saveLibraryStorage'), 'server.ts should have saveLibraryStorage');
+  });
+
+  test('storage.ts should provide fetchServerStorage and syncServerStorage', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const storageContent = fs.readFileSync(path.join(process.cwd(), 'src', 'services', 'storage.ts'), 'utf-8');
+
+    assert.ok(storageContent.includes('fetchServerStorage'), 'storage.ts should export fetchServerStorage');
+    assert.ok(storageContent.includes('syncServerStorage'), 'storage.ts should export syncServerStorage');
+    assert.ok(storageContent.includes('/api/storage/sync'), 'storage.ts should call /api/storage/sync');
+  });
+
+  test('config.json should have consistent and stable structure', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const configPath = path.join(process.cwd(), 'config.json');
+
+    assert.ok(fs.existsSync(configPath), 'config.json should exist');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    assert.ok(typeof config.global_storage_path === 'string', 'global_storage_path should be string');
+    assert.ok(typeof config.default_provider === 'string', 'default_provider should be string');
+    assert.ok(typeof config.default_model === 'string', 'default_model should be string');
+  });
+  test('server.ts and storage.ts should support physical folder deletion and renaming', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const serverContent = fs.readFileSync(path.join(process.cwd(), 'server.ts'), 'utf-8');
+    const storageContent = fs.readFileSync(path.join(process.cwd(), 'src', 'services', 'storage.ts'), 'utf-8');
+
+    assert.ok(serverContent.includes('/api/storage/delete-novel'), 'server.ts should have /api/storage/delete-novel');
+    assert.ok(serverContent.includes('/api/storage/delete-chapter'), 'server.ts should have /api/storage/delete-chapter');
+    assert.ok(serverContent.includes('/api/storage/rename-novel'), 'server.ts should have /api/storage/rename-novel');
+    assert.ok(serverContent.includes('fs.rmSync'), 'server.ts should use fs.rmSync to delete physical folder');
+
+    assert.ok(storageContent.includes('deleteStoredNovel'), 'storage.ts should export deleteStoredNovel');
+    assert.ok(storageContent.includes('deleteStoredChapter'), 'storage.ts should export deleteStoredChapter');
+    assert.ok(storageContent.includes('renameStoredNovel'), 'storage.ts should export renameStoredNovel');
+  });
+});
 
 console.log('\n=== Unit Tests Complete ===\n');
