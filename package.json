@@ -5,16 +5,16 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
-    "start": "node dist/server.cjs",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=esm --packages=external --sourcemap --outfile=dist/server.js",
+    "start": "node dist/server.js",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "bun test test/*.test.ts",
+    "test": "bun test test/",
     "test:security": "bun test test/server-security.test.ts",
     "test:client": "bun test test/client-security.test.ts",
     "test:unit": "bun test test/unit-tests.test.ts",
-    "test:all": "bun test test/*.test.ts"
+    "test:all": "bun test test/"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

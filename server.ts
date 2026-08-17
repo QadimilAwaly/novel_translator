@@ -2,17 +2,24 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { createServer as createViteServer } from 'vite';
+import dotenv from 'dotenv';
 import { GoogleGenAI, Type } from '@google/genai';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Load environment variables (.env.local has precedence over .env)
+if (fs.existsSync('.env.local')) {
+  dotenv.config({ path: '.env.local' });
+}
+dotenv.config();
+
+const __filename = typeof import.meta !== 'undefined' && import.meta?.url ? fileURLToPath(import.meta.url) : (typeof __filename !== 'undefined' ? __filename : '');
+const __dirname = __filename ? path.dirname(__filename) : process.cwd();
 
 async function startServer() {
   const app = express();
-  const PORT = Number(process.env.PORT) || 3000;
+  const PORT = Number(process.env.PORT) || 3131;
   // Default: hanya bind ke localhost untuk mencegah paparan jaringan (audit #3)
   const HOST = process.env.HOST || '127.0.0.1';
+  const isProduction = process.env.NODE_ENV === 'production' || __filename.includes('dist');
 
   app.disable('x-powered-by'); // audit #10
 
@@ -22,7 +29,7 @@ async function startServer() {
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Referrer-Policy', 'no-referrer');
     // Dev mode (Vite) butuh inline script + websocket HMR; production memakai CSP ketat
-    if (process.env.NODE_ENV === 'production') {
+    if (isProduction) {
       res.setHeader(
         'Content-Security-Policy',
         "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://openrouter.ai https://generativelanguage.googleapis.com; font-src 'self' data:"
@@ -1212,10 +1219,11 @@ Tugas Anda adalah menerjemahkan bab novel berikut secara akurat, alami, puitis j
 ATURAN WAJIB penerjemahan:
 1. HARUS mematuhi Glosarium Terikat di bawah ini secara konsisten. Jangan mengubah istilah yang sudah ditetapkan di Glosarium.
 2. HARUS menyelaraskan gaya bahasa dan nada cerita dengan Panduan Gaya & Lore yang diberikan.
-3. Pertahankan tata letak paragraf asli dan pemisah antar dialog.
-4. Baris pertama dari hasil terjemahan HARUS diawali dengan tag [JUDUL_BAB: Judul Bab Yang Menarik Dalam Bahasa ${bahasa_target}] jika diminta atau jika judul bab belum spesifik, kemudian ikuti dengan teks terjemahan selengkapnya.
-5. Jangan tambahkan komentar meta, pendahuluan, atau catatan kaki dari penerjemah. HANYA hasilkan teks terjemahan novel langsung.
-${custom_instructions ? `6. Instruksi Tambahan Pengguna: ${custom_instructions}` : ''}`;
+3. KONSISTENSI SUDUT PANDANG (POV): Gunakan satu sudut pandang (Point of View / POV) yang KONSISTEN di seluruh bab. DILARANG KERAS berpindah POV secara acak (misalnya tiba-tiba berubah dari orang pertama "aku/saya" ke orang ketiga "dia/nama karakter" atau sebaliknya antar paragraf). Pertahankan konsistensi narator dari awal hingga akhir bab, terutama saat menerjemahkan bahasa dengan subjek tersirat (seperti bahasa Jepang).
+4. Pertahankan tata letak paragraf asli dan pemisah antar dialog.
+5. Baris pertama dari hasil terjemahan HARUS diawali dengan tag [JUDUL_BAB: Judul Bab Yang Menarik Dalam Bahasa ${bahasa_target}] jika diminta atau jika judul bab belum spesifik, kemudian ikuti dengan teks terjemahan selengkapnya.
+6. Jangan tambahkan komentar meta, pendahuluan, atau catatan kaki dari penerjemah. HANYA hasilkan teks terjemahan novel langsung.
+${custom_instructions ? `7. Instruksi Tambahan Pengguna: ${custom_instructions}` : ''}`;
       const prompt = `[JUDUL NOVEL]
 ${judul_novel || 'Novel'} - Chapter ${nomor_chapter || 1}
 
@@ -1396,7 +1404,8 @@ HANYA ekstrak istilah yang penting dan benar-benar berguna untuk konsistensi bab
   });
 
   // Vite Development / Production Middleware
-  if (process.env.NODE_ENV !== 'production') {
+  if (!isProduction) {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
@@ -1412,6 +1421,9 @@ HANYA ekstrak istilah yang penting dan benar-benar berguna untuk konsistensi bab
 
   app.listen(PORT, HOST, () => {
     console.log(`[Novel Translator Server] Listening on http://${HOST}:${PORT}`);
+    if (HOST !== '127.0.0.1' && HOST !== 'localhost') {
+      console.log(`[Novel Translator Server] Network address: http://${HOST}:${PORT}`);
+    }
   });
 }
 
