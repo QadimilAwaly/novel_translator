@@ -40,9 +40,9 @@ export const SUPPORTED_LANGUAGES: LanguageCode[] = [
 export type ChapterStatus = 'Belum' | 'Sedang' | 'Selesai';
 
 export type ReferenceCategory = 'Karakter' | 'Tempat' | 'Lore' | 'Item' | 'Gaya Bahasa' | 'Lainnya';
+export type GenderTag = 'Male' | 'Female' | 'Neutral';
 
 export type GlossaryCategory = 'Nama' | 'Tempat' | 'Jurus/Sekte' | 'Item' | 'Istilah Khusus';
-
 export interface Novel {
   id: string;
   judul: string;
@@ -77,17 +77,16 @@ export interface NovelReferenceData {
   writing_style: string;
   items: ReferenceItem[];
 }
-
 export interface GlossaryItem {
   id: string;
   novel_id: string;
   istilah_asli: string;
   istilah_terjemahan: string;
   kategori: GlossaryCategory;
+  gender?: GenderTag;
   chapter_ditemukan?: string;
   konteks?: string;
 }
-
 export type AIProvider = 'gemini' | 'openrouter';
 
 export interface AIConfig {
@@ -112,6 +111,7 @@ export interface TranslateRequest {
     istilah_asli: string;
     istilah_terjemahan: string;
     kategori: string;
+    gender?: GenderTag;
     konteks?: string;
   }>;
   custom_instructions?: string;
@@ -140,5 +140,6 @@ export interface ExtractedTerm {
   istilah_asli: string;
   istilah_terjemahan: string;
   kategori: GlossaryCategory;
+  gender?: GenderTag;
   konteks: string;
 }

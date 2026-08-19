@@ -621,8 +621,8 @@ export default function App() {
       ...item,
       id: `glos-${crypto.randomUUID()}`,
       novel_id: activeNovelId,
+      gender: item.gender,
     };
-
     const allGloss = getStoredGlossaries(activeNovelId);
     const updatedAll = [newItem, ...allGloss];
     saveStoredGlossaries(updatedAll, activeNovelId);
@@ -686,6 +686,7 @@ export default function App() {
           istilah_asli: g.istilah_asli,
           istilah_terjemahan: g.istilah_terjemahan,
           kategori: g.kategori,
+          gender: g.gender,
           konteks: g.konteks,
         })),
         ai_config: {
@@ -756,13 +757,13 @@ export default function App() {
               istilah_asli: term.istilah_asli,
               istilah_terjemahan: term.istilah_terjemahan,
               kategori: term.kategori || 'Istilah Khusus',
+              gender: term.gender,
               chapter_ditemukan: `Chapter ${activeChapter.nomor_chapter}`,
               konteks: term.konteks || '',
             });
             addedCount++;
           }
         });
-
         saveStoredGlossaries(newGlossaryItems);
         setGlossaries(newGlossaryItems);
         showToast(`Berhasil mengekstrak ${addedCount} istilah baru ke glosarium!`);

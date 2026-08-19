@@ -221,7 +221,21 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({
                     <span className="font-mono text-indigo-300 font-semibold text-xs">
                       {item.istilah_asli}
                     </span>
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                      {item.kategori === 'Nama' && item.gender && (
+                        <span
+                          className={`text-[9px] px-1.5 py-0.5 rounded border font-mono font-semibold flex items-center gap-0.5 ${
+                            item.gender === 'Male'
+                              ? 'bg-blue-500/10 text-blue-400 border-blue-500/25'
+                              : item.gender === 'Female'
+                              ? 'bg-pink-500/10 text-pink-400 border-pink-500/25'
+                              : 'bg-gray-500/10 text-gray-400 border-gray-500/25'
+                          }`}
+                          title={`Pronoun Panduan: ${item.gender === 'Male' ? 'He/Him/His' : item.gender === 'Female' ? 'She/Her/Hers' : 'They/Them'}`}
+                        >
+                          {item.gender === 'Male' ? '♂ He/Him' : item.gender === 'Female' ? '♀ She/Her' : '⚪ They/It'}
+                        </span>
+                      )}
                       <span className="text-[9px] bg-[#0F1113] text-gray-400 px-1.5 py-0.5 rounded border border-gray-800 font-mono">
                         {item.kategori}
                       </span>

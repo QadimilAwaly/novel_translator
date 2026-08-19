@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { X, Tag } from 'lucide-react';
-import { GlossaryCategory } from '../types';
+import { X, Tag, User } from 'lucide-react';
+import { GlossaryCategory, GenderTag } from '../types';
 
 interface NewGlossaryModalProps {
   isOpen: boolean;
@@ -10,6 +10,7 @@ interface NewGlossaryModalProps {
     istilah_asli: string;
     istilah_terjemahan: string;
     kategori: GlossaryCategory;
+    gender?: GenderTag;
     chapter_ditemukan?: string;
     konteks?: string;
   }) => void;
@@ -24,6 +25,7 @@ export const NewGlossaryModal: React.FC<NewGlossaryModalProps> = ({
   const [istilahAsli, setIstilahAsli] = useState('');
   const [istilahTerjemahan, setIstilahTerjemahan] = useState('');
   const [kategori, setKategori] = useState<GlossaryCategory>('Nama');
+  const [gender, setGender] = useState<GenderTag>('Male');
   const [konteks, setKonteks] = useState('');
 
   if (!isOpen) return null;
@@ -36,6 +38,7 @@ export const NewGlossaryModal: React.FC<NewGlossaryModalProps> = ({
       istilah_asli: istilahAsli.trim(),
       istilah_terjemahan: istilahTerjemahan.trim(),
       kategori,
+      gender: kategori === 'Nama' ? gender : undefined,
       chapter_ditemukan: activeChapterNum ? `Chapter ${activeChapterNum}` : 'Manual',
       konteks: konteks.trim(),
     });
@@ -43,6 +46,7 @@ export const NewGlossaryModal: React.FC<NewGlossaryModalProps> = ({
     setIstilahAsli('');
     setIstilahTerjemahan('');
     setKonteks('');
+    setGender('Male');
     onClose();
   };
 
@@ -103,6 +107,53 @@ export const NewGlossaryModal: React.FC<NewGlossaryModalProps> = ({
               <option value="Istilah Khusus">Istilah Khusus / Lore</option>
             </select>
           </div>
+
+          {kategori === 'Nama' && (
+            <div className="space-y-1.5 p-2.5 bg-[#0F1113] border border-gray-800 rounded">
+              <label className="text-gray-300 font-medium flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <User className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Gender / Pronoun Karakter</span>
+                </span>
+                <span className="text-[10px] text-indigo-400 font-normal">Panduan Pronoun (He/She)</span>
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setGender('Male')}
+                  className={`py-1.5 px-2 rounded text-xs font-semibold flex items-center justify-center gap-1 transition-all border ${
+                    gender === 'Male'
+                      ? 'bg-blue-600/20 text-blue-300 border-blue-500/50 shadow-sm'
+                      : 'bg-[#16181D] text-gray-400 border-gray-800 hover:text-gray-200'
+                  }`}
+                >
+                  <span>♂ Pria (He)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setGender('Female')}
+                  className={`py-1.5 px-2 rounded text-xs font-semibold flex items-center justify-center gap-1 transition-all border ${
+                    gender === 'Female'
+                      ? 'bg-pink-600/20 text-pink-300 border-pink-500/50 shadow-sm'
+                      : 'bg-[#16181D] text-gray-400 border-gray-800 hover:text-gray-200'
+                  }`}
+                >
+                  <span>♀ Wanita (She)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setGender('Neutral')}
+                  className={`py-1.5 px-2 rounded text-xs font-semibold flex items-center justify-center gap-1 transition-all border ${
+                    gender === 'Neutral'
+                      ? 'bg-gray-600/20 text-gray-300 border-gray-500/50 shadow-sm'
+                      : 'bg-[#16181D] text-gray-400 border-gray-800 hover:text-gray-200'
+                  }`}
+                >
+                  <span>⚪ Netral (They)</span>
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="space-y-1">
             <label className="text-gray-300 font-medium">

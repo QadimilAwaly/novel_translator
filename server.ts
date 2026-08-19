@@ -447,9 +447,9 @@ async function startServer() {
     istilah_asli: string;
     istilah_terjemahan: string;
     kategori: string;
+    gender?: 'Male' | 'Female' | 'Neutral';
     konteks?: string;
   }
-
   const loadNovelDataFromDisk = (folderPath: string, novelId: string): {
     chapters: StoredChapter[];
     references: StoredReference[];
@@ -496,6 +496,7 @@ async function startServer() {
                 istilah_asli: String(it.istilah_asli || ''),
                 istilah_terjemahan: String(it.istilah_terjemahan || ''),
                 kategori: String(it.kategori || 'Istilah Khusus'),
+                gender: it.gender && (it.gender === 'Male' || it.gender === 'Female' || it.gender === 'Neutral') ? (it.gender as 'Male' | 'Female' | 'Neutral') : undefined,
                 konteks: it.konteks ? String(it.konteks) : undefined,
               });
             }
@@ -1290,11 +1291,14 @@ async function startServer() {
       // Jangan percaya API key dari client — resolve server-side dari config.json / env (audit #2)
       const apiKeyOverride = provider === 'openrouter' ? (config.openrouter_api_key || process.env.OPENROUTER_API_KEY) : (config.gemini_api_key || process.env.GEMINI_API_KEY);
 
-      // Format Glossary for Injection
+      // Format Glossary for Injection with Pronoun & Gender Information
       const glossaryPrompt = Array.isArray(glossary_items) && glossary_items.length > 0
-        ? glossary_items.map((g) => `- "${g.istilah_asli}" MUST BE TRANSLATED AS "${g.istilah_terjemahan}" [Kategori: ${g.kategori}${g.konteks ? `, Konteks: ${g.konteks}` : ''}]`).join('\n')
+        ? glossary_items.map((item: unknown) => {
+            const g = item as Record<string, unknown>;
+            const genderInfo = g.gender ? `, Gender: ${g.gender} (WAJIB PRONOUN: ${g.gender === 'Male' ? 'he/him/his/himself' : g.gender === 'Female' ? 'she/her/hers/herself' : 'they/them/theirs'})` : '';
+            return `- "${g.istilah_asli}" MUST BE TRANSLATED AS "${g.istilah_terjemahan}" [Kategori: ${g.kategori}${genderInfo}${g.konteks ? `, Konteks: ${g.konteks}` : ''}]`;
+          }).join('\n')
         : 'Belum ada istilah terdaftar.';
-
       // Format Reference & Lore for Injection
       const refSynopsis = reference_data?.synopsis || 'Tidak ada sinopsis.';
       const refStyle = reference_data?.writing_style || 'Gaya penerjemahan novel fiksi standar.';
@@ -1307,10 +1311,11 @@ ATURAN WAJIB penerjemahan:
 1. HARUS mematuhi Glosarium Terikat di bawah ini secara konsisten. Jangan mengubah istilah yang sudah ditetapkan di Glosarium.
 2. HARUS menyelaraskan gaya bahasa dan nada cerita dengan Panduan Gaya & Lore yang diberikan.
 3. KONSISTENSI SUDUT PANDANG (POV): Gunakan satu sudut pandang (Point of View / POV) yang KONSISTEN di seluruh bab. DILARANG KERAS berpindah POV secara acak (misalnya tiba-tiba berubah dari orang pertama "aku/saya" ke orang ketiga "dia/nama karakter" atau sebaliknya antar paragraf). Pertahankan konsistensi narator dari awal hingga akhir bab, terutama saat menerjemahkan bahasa dengan subjek tersirat (seperti bahasa Jepang).
-4. Pertahankan tata letak paragraf asli dan pemisah antar dialog.
-5. Baris pertama dari hasil terjemahan HARUS diawali dengan tag [JUDUL_BAB: Judul Bab Yang Menarik Dalam Bahasa ${bahasa_target}] jika diminta atau jika judul bab belum spesifik, kemudian ikuti dengan teks terjemahan selengkapnya.
-6. Jangan tambahkan komentar meta, pendahuluan, atau catatan kaki dari penerjemah. HANYA hasilkan teks terjemahan novel langsung.
-${custom_instructions ? `7. Instruksi Tambahan Pengguna: ${custom_instructions}` : ''}`;
+4. KONSISTENSI PRONOUN & GENDER KARAKTER: Untuk setiap karakter / nama yang memiliki tag Gender di Glosarium (Male / Female), WAJIB menggunakan pronoun yang sesuai (Male -> he/him/his/himself; Female -> she/her/hers/herself; Neutral -> they/them/it). DILARANG KERAS menukar pronoun he/she pada karakter yang sudah ditentukan gendernya dalam bahasa Inggris.
+5. Pertahankan tata letak paragraf asli dan pemisah antar dialog.
+6. Baris pertama dari hasil terjemahan HARUS diawali dengan tag [JUDUL_BAB: Judul Bab Yang Menarik Dalam Bahasa ${bahasa_target}] jika diminta atau jika judul bab belum spesifik, kemudian ikuti dengan teks terjemahan selengkapnya.
+7. Jangan tambahkan komentar meta, pendahuluan, atau catatan kaki dari penerjemah. HANYA hasilkan teks terjemahan novel langsung.
+${custom_instructions ? `8. Instruksi Tambahan Pengguna: ${custom_instructions}` : ''}`;
       const prompt = `[JUDUL NOVEL]
 ${judul_novel || 'Novel'} - Chapter ${nomor_chapter || 1}
 
@@ -1405,7 +1410,7 @@ ${existingTermsList}
 
 Tugas Anda:
 Ekstrak semua istilah baru yang penting yang muncul dalam chapter ini dari bahasa sumber (${sourceLang}) ke bahasa target (${targetLang}), meliputi:
-1. Nama Karakter (orang, gelar)
+1. Nama Karakter (orang, gelar) - WAJIB sertakan gender ("Male" / "Female" / "Neutral") untuk panduan pronoun he/she
 2. Nama Tempat / Lokasi / Sekte / Kota / Bangunan
 3. Jurus, Teknik, Alam Kultivasi, Sihir, Kemampuan
 4. Item Khusus, Senjata, Artefak, Ramuan
@@ -1414,6 +1419,7 @@ Ekstrak semua istilah baru yang penting yang muncul dalam chapter ini dari bahas
 PENTING:
 - 'istilah_asli' HARUS berupa kata/frasa dalam bahasa sumber (${sourceLang}).
 - 'istilah_terjemahan' HARUS berupa padanan/terjemahan resmi dalam bahasa target (${targetLang}), BUKAN bahasa lain.
+- Jika kategori adalah "Nama", tentukan 'gender' ("Male" untuk pria, "Female" untuk wanita, "Neutral" untuk lainnya) untuk memastikan konsistensi pronoun bahasa Inggris (he vs she).
 - 'konteks' berupa catatan singkat dalam bahasa target (${targetLang}).
 
 Kembalikan respon DALAM FORMAT JSON SAJA dengan skema:
@@ -1423,11 +1429,11 @@ Kembalikan respon DALAM FORMAT JSON SAJA dengan skema:
       "istilah_asli": "istilah dalam bahasa sumber (${sourceLang})",
       "istilah_terjemahan": "terjemahan resmi dalam bahasa target (${targetLang})",
       "kategori": "Nama" | "Tempat" | "Jurus/Sekte" | "Item" | "Istilah Khusus",
+      "gender": "Male" | "Female" | "Neutral" (Wajib jika kategori "Nama"),
       "konteks": "penjelasan singkat penggunaan dalam bahasa ${targetLang}"
     }
   ]
 }
-
 HANYA ekstrak istilah yang penting dan benar-benar berguna untuk konsistensi bab selanjutnya.`;
 
       let parsed = { terms: [] };
@@ -1472,6 +1478,10 @@ HANYA ekstrak istilah yang penting dan benar-benar berguna untuk konsistensi bab
                     kategori: {
                       type: Type.STRING,
                       description: 'Kategori istilah: "Nama", "Tempat", "Jurus/Sekte", "Item", atau "Istilah Khusus"',
+                    },
+                    gender: {
+                      type: Type.STRING,
+                      description: 'Gender karakter jika kategori "Nama": "Male", "Female", atau "Neutral" (untuk panduan pronoun he/she dalam bahasa Inggris)',
                     },
                     konteks: {
                       type: Type.STRING,

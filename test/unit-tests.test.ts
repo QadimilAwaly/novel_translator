@@ -360,6 +360,21 @@ describe('Server-Backed Persistent Storage & Config Stability', () => {
     assert.ok(serverContent.includes('${targetLang}'), 'server.ts /api/extract-glossary prompt should interpolate targetLang');
     assert.ok(appContent.includes('bahasa_target: activeNovel?.bahasa_target'), 'App.tsx should pass activeNovel target language to extractGlossaryApi');
   });
+  test('glossary items should support gender tags for character names to prevent pronoun errors in English translation', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const typesContent = fs.readFileSync(path.join(process.cwd(), 'src', 'types.ts'), 'utf-8');
+    const modalContent = fs.readFileSync(path.join(process.cwd(), 'src', 'components', 'NewGlossaryModal.tsx'), 'utf-8');
+    const panelContent = fs.readFileSync(path.join(process.cwd(), 'src', 'components', 'ContextPanel.tsx'), 'utf-8');
+    const serverContent = fs.readFileSync(path.join(process.cwd(), 'server.ts'), 'utf-8');
+
+    assert.ok(typesContent.includes("export type GenderTag = 'Male' | 'Female' | 'Neutral';"), 'types.ts should export GenderTag');
+    assert.ok(typesContent.includes('gender?: GenderTag;'), 'GlossaryItem should have optional gender field');
+    assert.ok(modalContent.includes('GenderTag'), 'NewGlossaryModal should import GenderTag');
+    assert.ok(modalContent.includes("kategori === 'Nama'"), 'NewGlossaryModal should show gender selector for Nama category');
+    assert.ok(panelContent.includes("item.kategori === 'Nama' && item.gender"), 'ContextPanel should render gender badge for Nama items');
+    assert.ok(serverContent.includes('WAJIB PRONOUN') || serverContent.includes('he/him/his'), 'server.ts should inject pronoun rules for gendered glossary items');
+  });
 });
 
 console.log('\n=== Unit Tests Complete ===\n');
