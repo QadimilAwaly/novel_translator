@@ -372,7 +372,8 @@ describe('Server-Backed Persistent Storage & Config Stability', () => {
     assert.ok(typesContent.includes('gender?: GenderTag;'), 'GlossaryItem should have optional gender field');
     assert.ok(modalContent.includes('GenderTag'), 'NewGlossaryModal should import GenderTag');
     assert.ok(modalContent.includes("kategori === 'Nama'"), 'NewGlossaryModal should show gender selector for Nama category');
-    assert.ok(panelContent.includes("item.kategori === 'Nama' && item.gender"), 'ContextPanel should render gender badge for Nama items');
+    assert.ok(panelContent.includes("onUpdateGlossaryGender"), 'ContextPanel should accept onUpdateGlossaryGender');
+    assert.ok(panelContent.includes("+ Gender"), 'ContextPanel should show + Gender button for untagged character names');
     assert.ok(serverContent.includes('WAJIB PRONOUN') || serverContent.includes('he/him/his'), 'server.ts should inject pronoun rules for gendered glossary items');
   });
 });

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Novel, Chapter, ReferenceItem, GlossaryItem, ChapterStatus, LanguageCode, AIConfig } from './types';
+import { Novel, Chapter, ReferenceItem, GlossaryItem, ChapterStatus, LanguageCode, AIConfig, GenderTag } from './types';
 import {
   getStoredNovels,
   saveStoredNovels,
@@ -638,6 +638,16 @@ export default function App() {
     setGlossaries(updated);
     showToast('Istilah berhasil dihapus dari glosarium.');
   };
+
+  // Handler: Update Glossary Gender Tag
+  const handleUpdateGlossaryGender = (id: string, gender: GenderTag | undefined) => {
+    if (!activeNovelId) return;
+
+    const updated = glossaries.map((g) => (g.id === id ? { ...g, gender } : g));
+    saveStoredGlossaries(updated, activeNovelId);
+    setGlossaries(updated);
+    showToast(`Gender istilah "${updated.find((g) => g.id === id)?.istilah_asli}" diperbarui.`);
+  };
   // Handler: Add Reference Item
   const handleAddReferenceItem = (item: Omit<ReferenceItem, 'id' | 'novel_id'>) => {
     if (!activeNovelId) return;
@@ -896,6 +906,7 @@ export default function App() {
               onDeleteReferenceItem={handleDeleteReferenceItem}
               onAddGlossaryItem={handleAddGlossaryItem}
               onDeleteGlossaryItem={handleDeleteGlossaryItem}
+              onUpdateGlossaryGender={handleUpdateGlossaryGender}
               onOpenNewGlossaryModal={() => setIsNewGlossaryModalOpen(true)}
               onClose={() => setIsRightPanelOpen(false)}
             />

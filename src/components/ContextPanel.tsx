@@ -19,9 +19,9 @@ import {
   ReferenceItem,
   GlossaryItem,
   ReferenceCategory,
-  GlossaryCategory
+  GlossaryCategory,
+  GenderTag
 } from '../types';
-
 interface ContextPanelProps {
   activeNovel: Novel | null;
   references: ReferenceItem[];
@@ -34,6 +34,7 @@ interface ContextPanelProps {
   onDeleteReferenceItem: (id: string) => void;
   onAddGlossaryItem: (item: Omit<GlossaryItem, 'id' | 'novel_id'>) => void;
   onDeleteGlossaryItem: (id: string) => void;
+  onUpdateGlossaryGender?: (id: string, gender: GenderTag | undefined) => void;
   onOpenNewGlossaryModal: () => void;
   onClose?: () => void;
 }
@@ -50,6 +51,7 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({
   onDeleteReferenceItem,
   onAddGlossaryItem,
   onDeleteGlossaryItem,
+  onUpdateGlossaryGender,
   onOpenNewGlossaryModal,
   onClose,
 }) => {
@@ -222,19 +224,43 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({
                       {item.istilah_asli}
                     </span>
                     <div className="flex items-center gap-1.5 flex-wrap justify-end">
-                      {item.kategori === 'Nama' && item.gender && (
-                        <span
-                          className={`text-[9px] px-1.5 py-0.5 rounded border font-mono font-semibold flex items-center gap-0.5 ${
-                            item.gender === 'Male'
-                              ? 'bg-blue-500/10 text-blue-400 border-blue-500/25'
-                              : item.gender === 'Female'
-                              ? 'bg-pink-500/10 text-pink-400 border-pink-500/25'
-                              : 'bg-gray-500/10 text-gray-400 border-gray-500/25'
-                          }`}
-                          title={`Pronoun Panduan: ${item.gender === 'Male' ? 'He/Him/His' : item.gender === 'Female' ? 'She/Her/Hers' : 'They/Them'}`}
-                        >
-                          {item.gender === 'Male' ? '♂ He/Him' : item.gender === 'Female' ? '♀ She/Her' : '⚪ They/It'}
-                        </span>
+                      {item.kategori === 'Nama' && (
+                        item.gender ? (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const nextGender: Record<string, GenderTag> = {
+                                Male: 'Female',
+                                Female: 'Neutral',
+                                Neutral: 'Male',
+                              };
+                              onUpdateGlossaryGender?.(item.id, nextGender[item.gender || 'Male'] || 'Male');
+                            }}
+                            className={`text-[9px] px-1.5 py-0.5 rounded border font-mono font-semibold flex items-center gap-0.5 transition-all hover:scale-105 cursor-pointer shadow-sm ${
+                              item.gender === 'Male'
+                                ? 'bg-blue-500/20 text-blue-300 border-blue-500/40 hover:border-blue-300'
+                                : item.gender === 'Female'
+                                ? 'bg-pink-500/20 text-pink-300 border-pink-500/40 hover:border-pink-300'
+                                : 'bg-gray-500/20 text-gray-300 border-gray-500/40 hover:border-gray-300'
+                            }`}
+                            title={`Pronoun: ${item.gender === 'Male' ? 'He/Him/His' : item.gender === 'Female' ? 'She/Her/Hers' : 'They/Them'} (Klik untuk ganti: Pria -> Wanita -> Netral)`}
+                          >
+                            {item.gender === 'Male' ? '♂ He/Him' : item.gender === 'Female' ? '♀ She/Her' : '⚪ They/It'}
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onUpdateGlossaryGender?.(item.id, 'Male');
+                            }}
+                            className="text-[9px] px-1.5 py-0.5 rounded border border-dashed border-gray-700 text-gray-400 hover:text-indigo-300 hover:border-indigo-500/50 hover:bg-indigo-500/10 font-mono transition-all cursor-pointer"
+                            title="Klik untuk set Gender & Pronoun karakter (Pria / Wanita / Netral)"
+                          >
+                            + Gender
+                          </button>
+                        )
                       )}
                       <span className="text-[9px] bg-[#0F1113] text-gray-400 px-1.5 py-0.5 rounded border border-gray-800 font-mono">
                         {item.kategori}
