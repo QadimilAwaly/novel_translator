@@ -127,6 +127,8 @@ export interface ExtractGlossaryRequest {
   teks_terjemahan: string;
   nomor_chapter: string | number;
   existing_glossary: string[];
+  bahasa_sumber?: LanguageCode;
+  bahasa_target?: LanguageCode;
   ai_config?: {
     provider: AIProvider;
     model: string;

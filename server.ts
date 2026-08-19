@@ -11,16 +11,15 @@ if (fs.existsSync('.env.local')) {
 }
 dotenv.config();
 
-const __filename = typeof import.meta !== 'undefined' && import.meta?.url ? fileURLToPath(import.meta.url) : (typeof __filename !== 'undefined' ? __filename : '');
-const __dirname = __filename ? path.dirname(__filename) : process.cwd();
+const currentFilename = typeof import.meta !== 'undefined' && import.meta?.url ? fileURLToPath(import.meta.url) : '';
+const currentDirname = currentFilename ? path.dirname(currentFilename) : process.cwd();
 
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3131;
   // Default: hanya bind ke localhost untuk mencegah paparan jaringan (audit #3)
   const HOST = process.env.HOST || '127.0.0.1';
-  const isProduction = process.env.NODE_ENV === 'production' || __filename.includes('dist');
-
+  const isProduction = process.env.NODE_ENV === 'production' || currentFilename.includes('dist');
   app.disable('x-powered-by'); // audit #10
 
   // Security headers (audit #9, #20)
@@ -946,6 +945,29 @@ async function startServer() {
       res.status(500).json({ error: 'Gagal menghapus bab dari disk server.' });
     }
   });
+  // API Route: Delete Glossary Item from Storage
+  app.post('/api/storage/delete-glossary', rateLimit(60, 60000), (req, res) => {
+    try {
+      const { glossary_id, novel_id } = req.body || {};
+      if (!glossary_id || typeof glossary_id !== 'string') {
+        return res.status(400).json({ error: 'glossary_id wajib disertakan.' });
+      }
+
+      const current = readLibraryStorage();
+      const updatedGlossaries = current.glossaries.filter((g) => g.id !== glossary_id);
+
+      const updated = saveLibraryStorage({
+        glossaries: updatedGlossaries,
+      });
+
+      res.json({ status: 'success', data: updated });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Gagal menghapus istilah glosarium';
+      console.error('Error deleting glossary item from storage:', msg);
+      res.status(500).json({ error: 'Gagal menghapus istilah glosarium dari disk server.' });
+    }
+  });
+
 
   // API Route: Rename Novel and its Physical Directory on Disk
   app.post('/api/storage/rename-novel', rateLimit(60, 60000), (req, res) => {
@@ -975,14 +997,18 @@ async function startServer() {
   app.post('/api/save-chapter', rateLimit(60, 60000), (req, res) => {
     try {
       const { folder_path, chapter_number, chapter_title, original_text, translated_text, novel_title, source_lang, target_lang } = req.body;
-      const config = readConfig();
-      const basePath = path.join(process.cwd(), 'Novel_Library');
+      const libraryBase = getLibraryStorageDir();
+      const cleanNovelTitle = sanitizeFilename(novel_title || 'Novel');
+      let targetFolder = path.join(libraryBase, cleanNovelTitle);
 
-      const safeFolder = resolveSafePath(folder_path || config.global_storage_path || basePath, basePath);
-      if (!safeFolder) {
-        return res.status(400).json({ error: 'folder_path tidak valid: mencoba mengakses di luar direktori yang diizinkan.' });
+      if (folder_path && typeof folder_path === 'string' && !folder_path.startsWith('[')) {
+        const safe = resolveSafePath(folder_path, libraryBase);
+        if (safe) {
+          targetFolder = safe;
+        } else if (fs.existsSync(folder_path) && !folder_path.includes('\0')) {
+          targetFolder = path.resolve(folder_path);
+        }
       }
-      const targetFolder = safeFolder;
 
       if (!fs.existsSync(targetFolder)) {
         fs.mkdirSync(targetFolder, { recursive: true });
@@ -1003,18 +1029,23 @@ async function startServer() {
       res.status(500).json({ error: error.message || 'Gagal menyimpan file ke folder lokal.' });
     }
   });
+
   // API Route: Bulk Export Entire Novel to Local Physical Storage
   app.post('/api/export-novel', rateLimit(30, 60000), (req, res) => {
     try {
       const { novel, chapters, references, glossaries, synopsis, writing_style } = req.body;
-      const config = readConfig();
-      const basePath = path.join(process.cwd(), 'Novel_Library');
+      const libraryBase = getLibraryStorageDir();
+      const cleanTitle = sanitizeFilename(novel?.judul || 'Novel_' + (novel?.id || Date.now()));
 
-      const safeFolder = resolveSafePath(novel?.folder_path || config.global_storage_path || basePath, basePath);
-      if (!safeFolder) {
-        return res.status(400).json({ error: 'folder_path tidak valid: mencoba mengakses di luar direktori yang diizinkan.' });
+      let targetFolder = path.join(libraryBase, cleanTitle);
+      if (novel?.folder_path && typeof novel.folder_path === 'string' && !novel.folder_path.startsWith('[')) {
+        const safe = resolveSafePath(novel.folder_path, libraryBase);
+        if (safe) {
+          targetFolder = safe;
+        } else if (fs.existsSync(novel.folder_path) && !novel.folder_path.includes('\0')) {
+          targetFolder = path.resolve(novel.folder_path);
+        }
       }
-      const targetFolder = safeFolder;
 
       if (!fs.existsSync(targetFolder)) {
         fs.mkdirSync(targetFolder, { recursive: true });
@@ -1070,16 +1101,15 @@ async function startServer() {
         return res.status(400).json({ error: 'folder_path wajib diisi.' });
       }
 
-      const basePath = path.join(process.cwd(), 'Novel_Library');
-      let targetFolder = resolveSafePath(folder_path, basePath);
-      if (!targetFolder && fs.existsSync(folder_path)) {
-        targetFolder = folder_path;
+      const libraryBase = getLibraryStorageDir();
+      let targetFolder = resolveSafePath(folder_path, libraryBase);
+      if (!targetFolder && fs.existsSync(folder_path) && !folder_path.includes('\0')) {
+        targetFolder = path.resolve(folder_path);
       }
 
       if (!targetFolder || !fs.existsSync(targetFolder)) {
         return res.status(404).json({ error: `Folder "${folder_path}" tidak ditemukan.` });
       }
-
       // Read metadata/reference.json & metadata/glossary.json if exists
       const metadataFolder = path.join(targetFolder, 'metadata');
       let referenceJson: any = null;
@@ -1287,11 +1317,14 @@ Terjemahkan teks di atas ke ${bahasa_target} sesuai aturan dan glosarium di atas
   // API Route: Extract & Sync Glossary (Phase 3 Progression & Auto Extraction)
   app.post('/api/extract-glossary', rateLimit(20, 60000), async (req, res) => {
     try {
-      const { teks_asli, teks_terjemahan, nomor_chapter, existing_glossary, ai_config } = req.body;
+      const { teks_asli, teks_terjemahan, nomor_chapter, existing_glossary, bahasa_sumber, bahasa_target, ai_config } = req.body;
 
       if (!teks_asli || !teks_terjemahan) {
         return res.status(400).json({ error: 'Teks asli dan teks terjemahan diperlukan untuk ekstraksi glosarium.' });
       }
+
+      const sourceLang = typeof bahasa_sumber === 'string' && bahasa_sumber.trim() ? bahasa_sumber.trim() : 'Bahasa Asli';
+      const targetLang = typeof bahasa_target === 'string' && bahasa_target.trim() ? bahasa_target.trim() : 'Bahasa Target';
 
       const config = readConfig();
       const provider = ai_config?.provider || config.default_provider || 'gemini';
@@ -1302,33 +1335,38 @@ Terjemahkan teks di atas ke ${bahasa_target} sesuai aturan dan glosarium di atas
 
       const existingTermsList = Array.isArray(existing_glossary) ? existing_glossary.join(', ') : 'Belum ada';
 
-      const prompt = `Analisis teks asli dan teks terjemahan dari Chapter ${nomor_chapter} berikut:
+      const prompt = `Analisis teks asli (${sourceLang}) dan teks terjemahan (${targetLang}) dari Chapter ${nomor_chapter} berikut:
 
-[TEKS ASLI]
+[TEKS ASLI (${sourceLang})]
 ${teks_asli.slice(0, 4000)}
 
-[TEKS TERJEMAHAN]
+[TEKS TERJEMAHAN (${targetLang})]
 ${teks_terjemahan.slice(0, 4000)}
 
 [ISTILAH YANG SUDAH ADA DILANJUTKAN (ABAIKAN KECUALI PERLU DIPERBARUI)]
 ${existingTermsList}
 
 Tugas Anda:
-Ekstrak semua istilah baru yang penting yang muncul dalam chapter ini, meliputi:
+Ekstrak semua istilah baru yang penting yang muncul dalam chapter ini dari bahasa sumber (${sourceLang}) ke bahasa target (${targetLang}), meliputi:
 1. Nama Karakter (orang, gelar)
 2. Nama Tempat / Lokasi / Sekte / Kota / Bangunan
 3. Jurus, Teknik, Alam Kultivasi, Sihir, Kemampuan
 4. Item Khusus, Senjata, Artefak, Ramuan
 5. Istilah Khusus Novel / Lore Unik
 
+PENTING:
+- 'istilah_asli' HARUS berupa kata/frasa dalam bahasa sumber (${sourceLang}).
+- 'istilah_terjemahan' HARUS berupa padanan/terjemahan resmi dalam bahasa target (${targetLang}), BUKAN bahasa lain.
+- 'konteks' berupa catatan singkat dalam bahasa target (${targetLang}).
+
 Kembalikan respon DALAM FORMAT JSON SAJA dengan skema:
 {
   "terms": [
     {
-      "istilah_asli": "istilah dalam bahasa sumber",
-      "istilah_terjemahan": "terjemahan resmi dalam bahasa target",
+      "istilah_asli": "istilah dalam bahasa sumber (${sourceLang})",
+      "istilah_terjemahan": "terjemahan resmi dalam bahasa target (${targetLang})",
       "kategori": "Nama" | "Tempat" | "Jurus/Sekte" | "Item" | "Istilah Khusus",
-      "konteks": "penjelasan singkat penggunaan"
+      "konteks": "penjelasan singkat penggunaan dalam bahasa ${targetLang}"
     }
   ]
 }
@@ -1345,7 +1383,7 @@ HANYA ekstrak istilah yang penting dan benar-benar berguna untuk konsistensi bab
         const jsonText = await callOpenRouterWithRetry({
           model,
           apiKey,
-          systemInstruction: 'Anda adalah asisten ekstraksi glosarium novel yang mengembalikan JSON valid saja.',
+          systemInstruction: `Anda adalah asisten ekstraksi glosarium novel dari ${sourceLang} ke ${targetLang} yang mengembalikan JSON valid saja.`,
           prompt,
           jsonOutput: true,
         });
@@ -1362,17 +1400,17 @@ HANYA ekstrak istilah yang penting dan benar-benar berguna untuk konsistensi bab
             properties: {
               terms: {
                 type: Type.ARRAY,
-                description: 'Daftar istilah baru yang diekstrak dari chapter.',
+                description: `Daftar istilah baru yang diekstrak dari chapter dari ${sourceLang} ke ${targetLang}.`,
                 items: {
                   type: Type.OBJECT,
                   properties: {
                     istilah_asli: {
                       type: Type.STRING,
-                      description: 'Nama/istilah dalam bahasa sumber asli (misal: "Lin Feng", "Azure Dragon Sect", "Spatial Ring")',
+                      description: `Nama/istilah dalam bahasa sumber asli (${sourceLang})`,
                     },
                     istilah_terjemahan: {
                       type: Type.STRING,
-                      description: 'Terjemahan resmi istilah tersebut dalam bahasa target (misal: "Lin Feng", "Sekte Naga Biru", "Cincin Spasial")',
+                      description: `Terjemahan resmi istilah tersebut dalam bahasa target (${targetLang})`,
                     },
                     kategori: {
                       type: Type.STRING,
@@ -1380,7 +1418,7 @@ HANYA ekstrak istilah yang penting dan benar-benar berguna untuk konsistensi bab
                     },
                     konteks: {
                       type: Type.STRING,
-                      description: 'Penjelasan/konteks penggunaan singkat dalam cerita.',
+                      description: `Penjelasan/konteks penggunaan singkat dalam bahasa ${targetLang}.`,
                     },
                   },
                   required: ['istilah_asli', 'istilah_terjemahan', 'kategori'],

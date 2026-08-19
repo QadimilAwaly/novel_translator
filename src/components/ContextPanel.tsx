@@ -221,16 +221,21 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({
                     <span className="font-mono text-indigo-300 font-semibold text-xs">
                       {item.istilah_asli}
                     </span>
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1.5">
                       <span className="text-[9px] bg-[#0F1113] text-gray-400 px-1.5 py-0.5 rounded border border-gray-800 font-mono">
                         {item.kategori}
                       </span>
                       <button
-                        onClick={() => onDeleteGlossaryItem(item.id)}
-                        className="opacity-0 group-hover:opacity-100 p-0.5 text-gray-500 hover:text-red-400 rounded transition-opacity"
-                        title="Hapus Istilah"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (confirm(`Hapus istilah "${item.istilah_asli}" (${item.istilah_terjemahan}) dari glosarium?`)) {
+                            onDeleteGlossaryItem(item.id);
+                          }
+                        }}
+                        className="p-1 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors"
+                        title={`Hapus Istilah "${item.istilah_asli}"`}
                       >
-                        <Trash2 className="w-3 h-3" />
+                        <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   </div>
@@ -377,15 +382,21 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({
                   <div key={item.id} className="p-2.5 bg-[#1F2229] border border-gray-800 rounded space-y-1 relative group text-xs">
                     <div className="flex items-center justify-between">
                       <span className="font-bold text-indigo-300 font-sans">{item.nama_item}</span>
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-1.5">
                         <span className="text-[9px] bg-[#0F1113] text-gray-400 px-1.5 py-0.5 rounded border border-gray-800">
                           {item.kategori}
                         </span>
                         <button
-                          onClick={() => onDeleteReferenceItem(item.id)}
-                          className="opacity-0 group-hover:opacity-100 p-0.5 text-gray-500 hover:text-red-400 rounded transition-opacity"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (confirm(`Hapus referensi "${item.nama_item}"?`)) {
+                              onDeleteReferenceItem(item.id);
+                            }
+                          }}
+                          className="p-1 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors"
+                          title={`Hapus Referensi "${item.nama_item}"`}
                         >
-                          <Trash2 className="w-3 h-3" />
+                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     </div>

@@ -12,7 +12,9 @@ import {
   fetchServerStorage,
   deleteStoredNovel,
   deleteStoredChapter,
-  renameStoredNovel
+  renameStoredNovel,
+  deleteStoredGlossary,
+  deleteStoredReference
 } from './services/storage';
 import { translateChapterApi, extractGlossaryApi } from './services/api';
 import { filterRelevantGlossaries, filterRelevantReferences } from './services/contextFilter';
@@ -265,11 +267,13 @@ export default function App() {
       if (res.ok || fsSuccess) {
         showToast(`Seluruh novel (${chapters.length} bab) berhasil di-ekstrak ulang ke folder lokal!`);
       } else {
-        showToast('Gagal melakukan re-ekstrak novel.');
+        const errData = (await res.json().catch(() => ({}))) as { error?: string };
+        showToast(`Gagal re-ekstrak novel: ${errData.error || 'Server menolak permintaan'}`);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Gagal mengekstrak novel';
       console.error('Error re-exporting novel:', err);
-      showToast(`Terjadi kesalahan: ${err.message || 'Gagal mengekstrak novel'}`);
+      showToast(`Terjadi kesalahan: ${message}`);
     }
   };
   // Handler: Import & Merge Existing Local Novel Folder
@@ -630,12 +634,10 @@ export default function App() {
   const handleDeleteGlossaryItem = (id: string) => {
     if (!activeNovelId) return;
 
-    const updated = glossaries.filter((g) => g.id !== id);
-    saveStoredGlossaries(updated, activeNovelId);
+    const updated = deleteStoredGlossary(id, activeNovelId);
     setGlossaries(updated);
-    showToast('Istilah dihapus dari glosarium.');
+    showToast('Istilah berhasil dihapus dari glosarium.');
   };
-
   // Handler: Add Reference Item
   const handleAddReferenceItem = (item: Omit<ReferenceItem, 'id' | 'novel_id'>) => {
     if (!activeNovelId) return;
@@ -656,12 +658,10 @@ export default function App() {
   const handleDeleteReferenceItem = (id: string) => {
     if (!activeNovelId) return;
 
-    const updated = references.filter((r) => r.id !== id);
-    saveStoredReferences(updated, activeNovelId);
+    const updated = deleteStoredReference(id, activeNovelId);
     setReferences(updated);
-    showToast('Lore dihapus dari referensi.');
+    showToast('Lore/Referensi berhasil dihapus.');
   };
-
   // Phase 1 & 2: Translate Chapter via LLM with Context Assembly
   const handleTranslateChapter = async () => {
     if (!activeNovel || !activeChapter || !activeChapter.teks_asli.trim()) return;
@@ -732,6 +732,8 @@ export default function App() {
         teks_terjemahan: activeChapter.teks_terjemahan,
         nomor_chapter: activeChapter.nomor_chapter,
         existing_glossary: existingTermsList,
+        bahasa_sumber: activeNovel?.bahasa_sumber || 'Mandarin',
+        bahasa_target: activeNovel?.bahasa_target || 'Indonesia',
         ai_config: {
           provider: aiConfig.provider,
           model: aiConfig.model,

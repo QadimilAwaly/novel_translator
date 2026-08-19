@@ -413,6 +413,18 @@ export function saveStoredReferences(refs: ReferenceItem[], novelId?: string) {
     syncServerStorage({ references: refs });
   }
 }
+export function deleteStoredReference(referenceId: string, novelId?: string): ReferenceItem[] {
+  const allRefs = getAllStoredReferences();
+  const updatedAll = allRefs.filter((r) => r.id !== referenceId);
+  localStorage.setItem(REFERENCES_KEY, JSON.stringify(updatedAll));
+  syncServerStorage({ references: updatedAll });
+
+  if (novelId) {
+    return updatedAll.filter((r) => r.novel_id === novelId);
+  }
+  return updatedAll;
+}
+
 
 export function getAllStoredGlossaries(): GlossaryItem[] {
   const data = localStorage.getItem(GLOSSARIES_KEY);
@@ -440,4 +452,22 @@ export function saveStoredGlossaries(gloss: GlossaryItem[], novelId?: string) {
     localStorage.setItem(GLOSSARIES_KEY, JSON.stringify(gloss));
     syncServerStorage({ glossaries: gloss });
   }
+}
+export function deleteStoredGlossary(glossaryId: string, novelId?: string): GlossaryItem[] {
+  const allGloss = getAllStoredGlossaries();
+  const updatedAll = allGloss.filter((g) => g.id !== glossaryId);
+  localStorage.setItem(GLOSSARIES_KEY, JSON.stringify(updatedAll));
+  syncServerStorage({ glossaries: updatedAll });
+
+  // Also call delete endpoint
+  fetch('/api/storage/delete-glossary', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ glossary_id: glossaryId, novel_id: novelId }),
+  }).catch((err) => console.warn('Failed deleting glossary on server:', err));
+
+  if (novelId) {
+    return updatedAll.filter((g) => g.novel_id === novelId);
+  }
+  return updatedAll;
 }

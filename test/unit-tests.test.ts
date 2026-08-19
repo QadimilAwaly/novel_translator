@@ -337,6 +337,29 @@ describe('Server-Backed Persistent Storage & Config Stability', () => {
     assert.ok(storageContent.includes('deleteStoredChapter'), 'storage.ts should export deleteStoredChapter');
     assert.ok(storageContent.includes('renameStoredNovel'), 'storage.ts should export renameStoredNovel');
   });
+  test('storage.ts and server.ts should support glossary and reference deletion', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const serverContent = fs.readFileSync(path.join(process.cwd(), 'server.ts'), 'utf-8');
+    const storageContent = fs.readFileSync(path.join(process.cwd(), 'src', 'services', 'storage.ts'), 'utf-8');
+
+    assert.ok(serverContent.includes('/api/storage/delete-glossary'), 'server.ts should have /api/storage/delete-glossary');
+    assert.ok(storageContent.includes('deleteStoredGlossary'), 'storage.ts should export deleteStoredGlossary');
+    assert.ok(storageContent.includes('deleteStoredReference'), 'storage.ts should export deleteStoredReference');
+  });
+
+  test('glossary extraction should respect target language in prompt and API schema', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const serverContent = fs.readFileSync(path.join(process.cwd(), 'server.ts'), 'utf-8');
+    const typesContent = fs.readFileSync(path.join(process.cwd(), 'src', 'types.ts'), 'utf-8');
+    const appContent = fs.readFileSync(path.join(process.cwd(), 'src', 'App.tsx'), 'utf-8');
+
+    assert.ok(typesContent.includes('bahasa_target?: LanguageCode;'), 'ExtractGlossaryRequest should have optional bahasa_target');
+    assert.ok(serverContent.includes('bahasa_target'), 'server.ts /api/extract-glossary should accept bahasa_target');
+    assert.ok(serverContent.includes('${targetLang}'), 'server.ts /api/extract-glossary prompt should interpolate targetLang');
+    assert.ok(appContent.includes('bahasa_target: activeNovel?.bahasa_target'), 'App.tsx should pass activeNovel target language to extractGlossaryApi');
+  });
 });
 
 console.log('\n=== Unit Tests Complete ===\n');
