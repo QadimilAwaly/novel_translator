@@ -375,6 +375,52 @@ async function startServer() {
     updatedAt: string;
   }
 
+  // Helper: Resolve existing novel directory on disk to prevent duplicates
+  const resolveNovelFolderOnDisk = (libraryBase: string, novel: { id: string; judul: string; folder_path?: string }): string => {
+    // 1. If novel.folder_path points to an existing directory, use it
+    if (novel.folder_path) {
+      const directPath = path.isAbsolute(novel.folder_path)
+        ? path.resolve(novel.folder_path)
+        : path.resolve(libraryBase, novel.folder_path.replace(/^\//, ''));
+      if (fs.existsSync(directPath)) {
+        return directPath;
+      }
+    }
+
+    // 2. Check if folder exists by clean title
+    const cleanTitle = sanitizeFilename(novel.judul || 'Novel_' + novel.id);
+    const directClean = path.join(libraryBase, cleanTitle);
+    if (fs.existsSync(directClean)) {
+      return directClean;
+    }
+
+    // 3. Check if folder exists by snake_case title
+    const snakeTitle = cleanTitle.replace(/\s+/g, '_');
+    const directSnake = path.join(libraryBase, snakeTitle);
+    if (fs.existsSync(directSnake)) {
+      return directSnake;
+    }
+
+    // 4. Normalized match (ignore space/underscore/case differences)
+    if (fs.existsSync(libraryBase)) {
+      try {
+        const entries = fs.readdirSync(libraryBase);
+        const normTarget = cleanTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
+        for (const entry of entries) {
+          if (entry.startsWith('.')) continue;
+          const normEntry = entry.toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (normEntry === normTarget && normTarget.length > 3) {
+            return path.join(libraryBase, entry);
+          }
+        }
+      } catch (e) {
+        console.warn('Resolve folder scan warning:', e);
+      }
+    }
+
+    return directClean;
+  };
+
   interface StoredChapter {
     id: string;
     novel_id: string;
@@ -404,6 +450,132 @@ async function startServer() {
     konteks?: string;
   }
 
+  const loadNovelDataFromDisk = (folderPath: string, novelId: string): {
+    chapters: StoredChapter[];
+    references: StoredReference[];
+    glossaries: StoredGlossary[];
+  } => {
+    const chapters: StoredChapter[] = [];
+    const references: StoredReference[] = [];
+    const glossaries: StoredGlossary[] = [];
+
+    const refPath = path.join(folderPath, 'metadata', 'reference.json');
+    if (fs.existsSync(refPath)) {
+      try {
+        const refJson = JSON.parse(fs.readFileSync(refPath, 'utf-8'));
+        if (Array.isArray(refJson.reference_items)) {
+          refJson.reference_items.forEach((item: unknown) => {
+            if (item && typeof item === 'object') {
+              const it = item as Record<string, unknown>;
+              references.push({
+                id: String(it.id || `ref-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`),
+                novel_id: novelId,
+                kategori: String(it.kategori || 'Karakter'),
+                nama_item: String(it.nama_item || ''),
+                deskripsi: String(it.deskripsi || ''),
+              });
+            }
+          });
+        }
+      } catch (e) {
+        console.warn('Error reading reference.json in', folderPath, e);
+      }
+    }
+
+    const glosPath = path.join(folderPath, 'metadata', 'glossary.json');
+    if (fs.existsSync(glosPath)) {
+      try {
+        const glosJson = JSON.parse(fs.readFileSync(glosPath, 'utf-8'));
+        if (Array.isArray(glosJson)) {
+          glosJson.forEach((item: unknown) => {
+            if (item && typeof item === 'object') {
+              const it = item as Record<string, unknown>;
+              glossaries.push({
+                id: String(it.id || `glos-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`),
+                novel_id: novelId,
+                istilah_asli: String(it.istilah_asli || ''),
+                istilah_terjemahan: String(it.istilah_terjemahan || ''),
+                kategori: String(it.kategori || 'Istilah Khusus'),
+                konteks: it.konteks ? String(it.konteks) : undefined,
+              });
+            }
+          });
+        }
+      } catch (e) {
+        console.warn('Error reading glossary.json in', folderPath, e);
+      }
+    }
+
+    if (fs.existsSync(folderPath)) {
+      try {
+        const files = fs.readdirSync(folderPath);
+        files.forEach((file) => {
+          if ((file.endsWith('.md') || file.endsWith('.txt')) && !file.startsWith('.')) {
+            const chapFilePath = path.join(folderPath, file);
+            const content = fs.readFileSync(chapFilePath, 'utf-8');
+
+            const matchNum = file.match(/(?:Chapter|chap|Bab|bab)[_\-\s]*(\d+)/i) || file.match(/(\d+)/);
+            const nomorChapter = matchNum ? parseInt(matchNum[1], 10) : chapters.length + 1;
+
+            let title = `Chapter ${nomorChapter}`;
+            const titleMatch = content.match(/^#\s+(?:Chapter|Bab)\s+\d+[:\s\-]*(.+)$/m);
+            if (titleMatch && titleMatch[1]) {
+              title = titleMatch[1].trim();
+            }
+
+            let statusPengerjaan = 'Belum';
+            const statusMatch = content.match(/>\s*\*\*Status:\*\*\s*(.+)$/m);
+            if (statusMatch && statusMatch[1]) {
+              statusPengerjaan = statusMatch[1].trim();
+            }
+
+            let originalText = '';
+            let translatedText = '';
+
+            const transMatch = content.match(/## Hasil Terjemahan[^\n]*\n([\s\S]*?)(?:\n---|\n## Teks Asli|$)/);
+            if (transMatch) {
+              translatedText = transMatch[1].trim();
+            }
+
+            const origMatch = content.match(/## Teks Asli[^\n]*\n([\s\S]*?)(?:\n---|$)/);
+            if (origMatch) {
+              originalText = origMatch[1].trim();
+            }
+
+            if (!originalText && !translatedText) {
+              originalText = content;
+            }
+
+            if (!translatedText && content.includes('*(Belum diterjemahkan)*')) {
+              translatedText = '';
+            }
+
+            if (translatedText.length > 0 && statusPengerjaan === 'Belum') {
+              statusPengerjaan = 'Selesai';
+            }
+
+            chapters.push({
+              id: `chap-${novelId}-${nomorChapter}`,
+              novel_id: novelId,
+              nomor_chapter: nomorChapter,
+              judul_chapter: title,
+              teks_asli: originalText,
+              teks_terjemahan: translatedText,
+              status_pengerjaan: statusPengerjaan,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            });
+          }
+        });
+      } catch (err) {
+        console.error(`Error reading chapters from ${folderPath}:`, err);
+      }
+    }
+
+    chapters.sort((a, b) => a.nomor_chapter - b.nomor_chapter);
+    return { chapters, references, glossaries };
+  };
+
   const parseNovelFolderDisk = (folderPath: string, folderName: string): {
     novel: StoredNovel;
     chapters: StoredChapter[];
@@ -416,24 +588,13 @@ async function startServer() {
       novel_title?: string;
       source_language?: string;
       target_language?: string;
-      synopsis?: string;
-      writing_style?: string;
-      reference_items?: StoredReference[];
       updated_at?: string;
     } | null = null;
-    let glossJson: Array<{ istilah_asli: string; istilah_terjemahan: string; kategori?: string; konteks?: string }> = [];
 
     const refPath = path.join(folderPath, 'metadata', 'reference.json');
     if (fs.existsSync(refPath)) {
       try {
         refJson = JSON.parse(fs.readFileSync(refPath, 'utf-8'));
-      } catch (e) {}
-    }
-
-    const glosPath = path.join(folderPath, 'metadata', 'glossary.json');
-    if (fs.existsSync(glosPath)) {
-      try {
-        glossJson = JSON.parse(fs.readFileSync(glosPath, 'utf-8'));
       } catch (e) {}
     }
 
@@ -447,121 +608,7 @@ async function startServer() {
       updatedAt: new Date().toISOString(),
     };
 
-    const references: StoredReference[] = [];
-    if (refJson?.synopsis) {
-      references.push({
-        id: `ref-${novelId}-synopsis`,
-        novel_id: novelId,
-        kategori: 'Sinopsis',
-        nama_item: 'Sinopsis Utama',
-        deskripsi: refJson.synopsis,
-      });
-    }
-    if (refJson?.writing_style) {
-      references.push({
-        id: `ref-${novelId}-style`,
-        novel_id: novelId,
-        kategori: 'Gaya Bahasa',
-        nama_item: 'Gaya Bahasa',
-        deskripsi: refJson.writing_style,
-      });
-    }
-    if (Array.isArray(refJson?.reference_items)) {
-      refJson.reference_items.forEach((item, idx) => {
-        references.push({
-          id: item.id || `ref-${novelId}-${idx}`,
-          novel_id: novelId,
-          kategori: item.kategori || 'Karakter',
-          nama_item: item.nama_item || 'Item ' + (idx + 1),
-          deskripsi: item.deskripsi || '',
-        });
-      });
-    }
-
-    const glossaries: StoredGlossary[] = [];
-    if (Array.isArray(glossJson)) {
-      glossJson.forEach((g, idx) => {
-        glossaries.push({
-          id: `glos-${novelId}-${idx}`,
-          novel_id: novelId,
-          istilah_asli: g.istilah_asli,
-          istilah_terjemahan: g.istilah_terjemahan,
-          kategori: g.kategori || 'Istilah Khusus',
-          konteks: g.konteks || '',
-        });
-      });
-    }
-
-    const chapters: StoredChapter[] = [];
-    try {
-      const files = fs.readdirSync(folderPath);
-      files.forEach((file) => {
-        if (file.startsWith('.') || file === 'metadata') return;
-        const filePath = path.join(folderPath, file);
-        if (!fs.statSync(filePath).isFile()) return;
-
-        if (file.endsWith('.md') || file.endsWith('.txt')) {
-          const content = fs.readFileSync(filePath, 'utf-8');
-          const numMatch = file.match(/(\d+)/);
-          const nomorChapter = numMatch ? parseInt(numMatch[1], 10) : chapters.length + 1;
-
-          let title = file.replace(/\.[^/.]+$/, '');
-          const titleLineMatch = content.match(/^#\s*(?:Chapter\s*\d+:\s*)?(.*)$/m);
-          if (titleLineMatch && titleLineMatch[1].trim()) {
-            title = titleLineMatch[1].trim();
-          }
-
-          let originalText = content;
-          let translatedText = '';
-          let statusPengerjaan = 'Belum';
-
-          const statusMatch = content.match(/>\s*\*\*Status:\*\*\s*([^\n\r]+)/);
-          if (statusMatch && statusMatch[1].trim()) {
-            const rawStatus = statusMatch[1].trim();
-            if (rawStatus.toLowerCase().includes('selesai')) statusPengerjaan = 'Selesai';
-            else if (rawStatus.toLowerCase().includes('sedang')) statusPengerjaan = 'Sedang';
-          }
-
-          if (content.includes('## Hasil Terjemahan') || content.includes('## Teks Terjemahan')) {
-            const transMatch = content.match(/## (?:Hasil Terjemahan|Teks Terjemahan)\s*\([^)]*\)\s*\n([\s\S]*?)(?=\n---\n|\n## Teks Asli|$)/);
-            if (transMatch) {
-              translatedText = transMatch[1].trim();
-            }
-          }
-
-          if (content.includes('## Teks Asli')) {
-            const origMatch = content.match(/## Teks Asli\s*\([^)]*\)\s*\n([\s\S]*?)(?=$)/);
-            if (origMatch) {
-              originalText = origMatch[1].trim();
-            }
-          }
-
-          if (!translatedText && content.includes('*(Belum diterjemahkan)*')) {
-            translatedText = '';
-          }
-
-          if (translatedText.length > 0 && statusPengerjaan === 'Belum') {
-            statusPengerjaan = 'Selesai';
-          }
-
-          chapters.push({
-            id: `chap-${novelId}-${nomorChapter}-${Date.now().toString(36)}`,
-            novel_id: novelId,
-            nomor_chapter: nomorChapter,
-            judul_chapter: title,
-            teks_asli: originalText,
-            teks_terjemahan: translatedText,
-            status_pengerjaan: statusPengerjaan,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          });
-        }
-      });
-    } catch (err) {
-      console.error(`Error reading chapters from ${folderPath}:`, err);
-    }
-
-    chapters.sort((a, b) => a.nomor_chapter - b.nomor_chapter);
+    const { chapters, references, glossaries } = loadNovelDataFromDisk(folderPath, novelId);
     return { novel, chapters, references, glossaries };
   };
 
@@ -634,7 +681,11 @@ async function startServer() {
       if (hasChanges) {
         currentData.last_updated = new Date().toISOString();
         const filePath = getLibraryIndexFilePath();
-        fs.writeFileSync(filePath, JSON.stringify(currentData, null, 2), 'utf-8');
+        const manifest = {
+          novels: currentData.novels,
+          last_updated: currentData.last_updated,
+        };
+        fs.writeFileSync(filePath, JSON.stringify(manifest, null, 2), 'utf-8');
       }
     } catch (scanErr) {
       console.warn('Scan novel folders error:', scanErr);
@@ -644,44 +695,48 @@ async function startServer() {
 
   const readLibraryStorage = () => {
     const filePath = getLibraryIndexFilePath();
-    let data: {
-      novels: StoredNovel[];
-      chapters: StoredChapter[];
-      references: StoredReference[];
-      glossaries: StoredGlossary[];
-      last_updated: string;
-    } | null = null;
+    const libraryBase = getLibraryStorageDir();
+    let indexedNovels: StoredNovel[] = [];
+    let lastUpdated = new Date().toISOString();
 
     try {
       if (fs.existsSync(filePath)) {
         const raw = fs.readFileSync(filePath, 'utf-8');
         const parsed = JSON.parse(raw);
         if (parsed && Array.isArray(parsed.novels)) {
-          data = {
-            novels: parsed.novels,
-            chapters: Array.isArray(parsed.chapters) ? parsed.chapters : [],
-            references: Array.isArray(parsed.references) ? parsed.references : [],
-            glossaries: Array.isArray(parsed.glossaries) ? parsed.glossaries : [],
-            last_updated: parsed.last_updated || new Date().toISOString(),
-          };
+          indexedNovels = parsed.novels;
+          lastUpdated = parsed.last_updated || lastUpdated;
         }
       }
     } catch (err) {
       console.error('Error reading library_index.json:', err);
     }
 
-    if (!data) {
-      data = {
-        novels: [],
-        chapters: [],
-        references: [],
-        glossaries: [],
-        last_updated: new Date().toISOString(),
-      };
+    const allChapters: StoredChapter[] = [];
+    const allReferences: StoredReference[] = [];
+    const allGlossaries: StoredGlossary[] = [];
+
+    // Load each indexed novel's actual markdown and metadata files directly from disk
+    for (const novel of indexedNovels) {
+      const folder = resolveNovelFolderOnDisk(libraryBase, novel);
+      if (fs.existsSync(folder)) {
+        const data = loadNovelDataFromDisk(folder, novel.id);
+        allChapters.push(...data.chapters);
+        allReferences.push(...data.references);
+        allGlossaries.push(...data.glossaries);
+      }
     }
 
-    // Always scan and sync physical novel folders on disk
-    return scanAndSyncNovelFolders(data);
+    const result = {
+      novels: indexedNovels,
+      chapters: allChapters,
+      references: allReferences,
+      glossaries: allGlossaries,
+      last_updated: lastUpdated,
+    };
+
+    // Scan for unindexed novel folders and sync
+    return scanAndSyncNovelFolders(result);
   };
 
   const saveLibraryStorage = (data: {
@@ -782,13 +837,15 @@ async function startServer() {
     };
 
     const filePath = getLibraryIndexFilePath();
-    fs.writeFileSync(filePath, JSON.stringify(updated, null, 2), 'utf-8');
-
+    const manifest = {
+      novels: newNovels,
+      last_updated: new Date().toISOString(),
+    };
+    fs.writeFileSync(filePath, JSON.stringify(manifest, null, 2), 'utf-8');
     // Auto-sync physical folders for existing novels
     try {
       for (const novel of updated.novels) {
-        const cleanTitle = sanitizeFilename(novel.judul || 'Novel_' + novel.id);
-        const novelFolder = path.join(libraryBase, cleanTitle);
+        const novelFolder = resolveNovelFolderOnDisk(libraryBase, novel);
         if (!fs.existsSync(novelFolder)) {
           fs.mkdirSync(novelFolder, { recursive: true });
         }
