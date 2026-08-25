@@ -9,4 +9,3 @@ ATURAN WAJIB penerjemahan:
 5. Pertahankan tata letak paragraf asli dan pemisah antar dialog.
 6. Baris pertama dari hasil terjemahan HARUS diawali dengan tag [JUDUL_BAB: Judul Bab Yang Menarik Dalam Bahasa {{BAHASA_TARGET}}] jika diminta atau jika judul bab belum spesifik, kemudian ikuti dengan teks terjemahan selengkapnya.
 7. Jangan tambahkan komentar meta, pendahuluan, atau catatan kaki dari penerjemah. HANYA hasilkan teks terjemahan novel langsung.
-{{CUSTOM_INSTRUCTIONS}}

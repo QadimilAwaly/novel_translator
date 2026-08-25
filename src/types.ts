@@ -114,7 +114,6 @@ export interface TranslateRequest {
     gender?: GenderTag;
     konteks?: string;
   }>;
-  custom_instructions?: string;
   ai_config?: {
     provider: AIProvider;
     model: string;

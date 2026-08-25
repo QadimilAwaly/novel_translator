@@ -172,8 +172,7 @@ ATURAN WAJIB penerjemahan:
 4. KONSISTENSI PRONOUN & GENDER KARAKTER: Untuk setiap karakter / nama yang memiliki tag Gender di Glosarium (Male / Female), WAJIB menggunakan pronoun yang sesuai (Male -> he/him/his/himself; Female -> she/her/hers/herself; Neutral -> they/them/it). DILARANG KERAS menukar pronoun he/she pada karakter yang sudah ditentukan gendernya dalam bahasa Inggris.
 5. Pertahankan tata letak paragraf asli dan pemisah antar dialog.
 6. Baris pertama dari hasil terjemahan HARUS diawali dengan tag [JUDUL_BAB: Judul Bab Yang Menarik Dalam Bahasa {{BAHASA_TARGET}}] jika diminta atau jika judul bab belum spesifik, kemudian ikuti dengan teks terjemahan selengkapnya.
-7. Jangan tambahkan komentar meta, pendahuluan, atau catatan kaki dari penerjemah. HANYA hasilkan teks terjemahan novel langsung.
-{{CUSTOM_INSTRUCTIONS}}`;
+7. Jangan tambahkan komentar meta, pendahuluan, atau catatan kaki dari penerjemah. HANYA hasilkan teks terjemahan novel langsung.`;
 }
 
 // Single-pass token replacer: O(N) efficiency and immune to cascading injection
@@ -1377,17 +1376,11 @@ function ensurePromptTemplateFile(): void {
       const refSynopsis = reference_data?.synopsis || 'Tidak ada sinopsis.';
       const refStyle = reference_data?.writing_style || 'Gaya penerjemahan novel fiksi standar.';
       const refLore = reference_data?.lore_summary || 'Tidak ada catatan lore tambahan.';
-
       const systemInstructionTemplate = getTranslationSystemInstructionTemplate();
-
-      const customInstructionText = custom_instructions
-        ? `8. Instruksi Tambahan Pengguna: ${custom_instructions}`
-        : '';
 
       const templateVariables: Record<string, string> = {
         BAHASA_SUMBER: String(bahasa_sumber || 'Asli'),
         BAHASA_TARGET: String(bahasa_target || 'Target'),
-        CUSTOM_INSTRUCTIONS: customInstructionText,
       };
 
       const systemInstruction = renderPromptTemplate(systemInstructionTemplate, templateVariables);
