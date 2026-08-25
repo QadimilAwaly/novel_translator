@@ -376,7 +376,7 @@ describe('Server-Backed Persistent Storage & Config Stability', () => {
     assert.ok(panelContent.includes("+ Gender"), 'ContextPanel should show + Gender button for untagged character names');
     assert.ok(serverContent.includes('WAJIB PRONOUN') || serverContent.includes('he/him/his'), 'server.ts should inject pronoun rules for gendered glossary items');
   });
-  test('external translation prompt in /prompt/translation.md should be loaded and formatted with variables', () => {
+  test('external system instruction in /prompt/translation.md should be loaded and formatted with variables', () => {
     const fs = require('fs');
     const path = require('path');
     const promptFile = path.join(process.cwd(), 'prompt', 'translation.md');
@@ -384,14 +384,11 @@ describe('Server-Backed Persistent Storage & Config Stability', () => {
 
     assert.ok(fs.existsSync(promptFile), 'prompt/translation.md should exist');
     const promptContent = fs.readFileSync(promptFile, 'utf-8');
-    assert.ok(promptContent.includes('## SYSTEM INSTRUCTION'), 'translation.md should contain SYSTEM INSTRUCTION section');
-    assert.ok(promptContent.includes('## USER PROMPT'), 'translation.md should contain USER PROMPT section');
     assert.ok(promptContent.includes('{{BAHASA_SUMBER}}'), 'translation.md should have {{BAHASA_SUMBER}} variable');
     assert.ok(promptContent.includes('{{BAHASA_TARGET}}'), 'translation.md should have {{BAHASA_TARGET}} variable');
-    assert.ok(promptContent.includes('{{GLOSSARY_ITEMS}}'), 'translation.md should have {{GLOSSARY_ITEMS}} variable');
-    assert.ok(promptContent.includes('{{TEKS_ASLI}}'), 'translation.md should have {{TEKS_ASLI}} variable');
+    assert.ok(promptContent.includes('KONSISTENSI PRONOUN & GENDER KARAKTER'), 'translation.md should have pronoun and gender rules');
 
-    assert.ok(serverContent.includes('getTranslationPromptTemplate'), 'server.ts should have getTranslationPromptTemplate');
+    assert.ok(serverContent.includes('getTranslationSystemInstructionTemplate'), 'server.ts should have getTranslationSystemInstructionTemplate');
     assert.ok(serverContent.includes('renderPromptTemplate'), 'server.ts should have renderPromptTemplate');
     assert.ok(serverContent.includes('ensurePromptTemplateFile'), 'server.ts should have ensurePromptTemplateFile');
   });

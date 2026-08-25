@@ -127,12 +127,12 @@ async function startServer() {
     }
   }
 
-// In-memory cached prompt template with mtime tracking for zero-cost hot-reloading
-let cachedPromptTemplate: { systemInstructionTemplate: string; userPromptTemplate: string } | null = null;
+// In-memory cached system instruction template with mtime tracking for zero-cost hot-reloading
+let cachedSystemInstructionTemplate: string | null = null;
 let cachedPromptMtime = 0;
 
-// Helper: Load & Format Translation Prompt Template from prompt/translation.md
-function getTranslationPromptTemplate(): { systemInstructionTemplate: string; userPromptTemplate: string } {
+// Helper: Load System Instruction Template from prompt/translation.md
+function getTranslationSystemInstructionTemplate(): string {
   const promptPaths = [
     path.join(process.cwd(), 'prompt', 'translation.md'),
     path.join(process.cwd(), 'prompts', 'translation.md'),
@@ -142,21 +142,18 @@ function getTranslationPromptTemplate(): { systemInstructionTemplate: string; us
     if (fs.existsSync(p)) {
       try {
         const stat = fs.statSync(p);
-        if (cachedPromptTemplate && cachedPromptMtime === stat.mtimeMs) {
-          return cachedPromptTemplate;
+        if (cachedSystemInstructionTemplate && cachedPromptMtime === stat.mtimeMs) {
+          return cachedSystemInstructionTemplate;
         }
 
         const content = fs.readFileSync(p, 'utf-8');
         const sysMatch = content.match(/##\s*SYSTEM INSTRUCTION\s*([\s\S]*?)(?=---\s*|\n##\s*USER PROMPT|$)/i);
-        const userMatch = content.match(/##\s*USER PROMPT\s*([\s\S]*?)$/i);
+        const parsed = (sysMatch ? sysMatch[1] : content).trim();
 
-        if (sysMatch && userMatch) {
-          cachedPromptTemplate = {
-            systemInstructionTemplate: sysMatch[1].trim(),
-            userPromptTemplate: userMatch[1].trim(),
-          };
+        if (parsed) {
+          cachedSystemInstructionTemplate = parsed;
           cachedPromptMtime = stat.mtimeMs;
-          return cachedPromptTemplate;
+          return cachedSystemInstructionTemplate;
         }
       } catch (err) {
         console.warn('Failed reading external prompt template from', p, err);
@@ -165,8 +162,7 @@ function getTranslationPromptTemplate(): { systemInstructionTemplate: string; us
   }
 
   // Built-in fallback
-  return {
-    systemInstructionTemplate: `Anda adalah seorang penerjemah novel profesional berpengalaman tinggi dari bahasa {{BAHASA_SUMBER}} ke {{BAHASA_TARGET}}.
+  return `Anda adalah seorang penerjemah novel profesional berpengalaman tinggi dari bahasa {{BAHASA_SUMBER}} ke {{BAHASA_TARGET}}.
 Tugas Anda adalah menerjemahkan bab novel berikut secara akurat, alami, puitis jika diperlukan, dan mempertahankan aliran emosi cerita tanpa memotong paragraf atau menghilangkan detail penting.
 
 ATURAN WAJIB penerjemahan:
@@ -177,23 +173,7 @@ ATURAN WAJIB penerjemahan:
 5. Pertahankan tata letak paragraf asli dan pemisah antar dialog.
 6. Baris pertama dari hasil terjemahan HARUS diawali dengan tag [JUDUL_BAB: Judul Bab Yang Menarik Dalam Bahasa {{BAHASA_TARGET}}] jika diminta atau jika judul bab belum spesifik, kemudian ikuti dengan teks terjemahan selengkapnya.
 7. Jangan tambahkan komentar meta, pendahuluan, atau catatan kaki dari penerjemah. HANYA hasilkan teks terjemahan novel langsung.
-{{CUSTOM_INSTRUCTIONS}}`,
-    userPromptTemplate: `[JUDUL NOVEL]
-{{JUDUL_NOVEL}} - Chapter {{NOMOR_CHAPTER}}
-
-[PANDUAN REFERENSI & TONE]
-- Sinopsis / Gambaran Cerita: {{SYNOPSIS}}
-- Gaya Bahasa & Nada: {{WRITING_STYLE}}
-- Detail Lore & Karakter: {{LORE_SUMMARY}}
-
-[GLOSARIUM TERIKAT (PILIHAN ISTILAH MANDATORI)]
-{{GLOSSARY_ITEMS}}
-
-[TEKS ASLI CHAPTER ({{BAHASA_SUMBER}})]
-{{TEKS_ASLI}}
-
-Terjemahkan teks di atas ke {{BAHASA_TARGET}} sesuai aturan dan glosarium di atas:`,
-  };
+{{CUSTOM_INSTRUCTIONS}}`;
 }
 
 // Single-pass token replacer: O(N) efficiency and immune to cascading injection
@@ -210,15 +190,13 @@ function ensurePromptTemplateFile(): void {
       if (!fs.existsSync(promptDir)) {
         fs.mkdirSync(promptDir, { recursive: true });
       }
-      const { systemInstructionTemplate, userPromptTemplate } = getTranslationPromptTemplate();
-      const defaultContent = `# Template Prompt Penerjemahan Novel\n\nFile ini digunakan oleh server untuk merakit prompt penerjemahan bab novel.\nAnda dapat mengedit instruksi, aturan, atau gaya terjemahan langsung di file ini tanpa harus memodifikasi kode sumber.\nPerubahan pada file ini akan langsung diterapkan secara otomatis (Hot-Reload).\n\n---\n\n## SYSTEM INSTRUCTION\n${systemInstructionTemplate}\n\n---\n\n## USER PROMPT\n${userPromptTemplate}\n`;
+      const defaultContent = getTranslationSystemInstructionTemplate();
       fs.writeFileSync(promptFile, defaultContent, 'utf-8');
     } catch (e) {
       console.warn('Failed auto-creating prompt/translation.md:', e);
     }
   }
 }
-
 
   // Helper: OpenRouter API Call
   const callOpenRouter = async ({
@@ -1400,7 +1378,7 @@ function ensurePromptTemplateFile(): void {
       const refStyle = reference_data?.writing_style || 'Gaya penerjemahan novel fiksi standar.';
       const refLore = reference_data?.lore_summary || 'Tidak ada catatan lore tambahan.';
 
-      const { systemInstructionTemplate, userPromptTemplate } = getTranslationPromptTemplate();
+      const systemInstructionTemplate = getTranslationSystemInstructionTemplate();
 
       const customInstructionText = custom_instructions
         ? `8. Instruksi Tambahan Pengguna: ${custom_instructions}`
@@ -1409,18 +1387,27 @@ function ensurePromptTemplateFile(): void {
       const templateVariables: Record<string, string> = {
         BAHASA_SUMBER: String(bahasa_sumber || 'Asli'),
         BAHASA_TARGET: String(bahasa_target || 'Target'),
-        JUDUL_NOVEL: String(judul_novel || 'Novel'),
-        NOMOR_CHAPTER: String(nomor_chapter || 1),
-        SYNOPSIS: String(refSynopsis),
-        WRITING_STYLE: String(refStyle),
-        LORE_SUMMARY: String(refLore),
-        GLOSSARY_ITEMS: String(glossaryPrompt),
-        TEKS_ASLI: String(teks_asli),
         CUSTOM_INSTRUCTIONS: customInstructionText,
       };
 
       const systemInstruction = renderPromptTemplate(systemInstructionTemplate, templateVariables);
-      const prompt = renderPromptTemplate(userPromptTemplate, templateVariables);
+
+      // User context prompt is securely assembled in code to protect critical application data flow
+      const prompt = `[JUDUL NOVEL]
+${judul_novel || 'Novel'} - Chapter ${nomor_chapter || 1}
+
+[PANDUAN REFERENSI & TONE]
+- Sinopsis / Gambaran Cerita: ${refSynopsis}
+- Gaya Bahasa & Nada: ${refStyle}
+- Detail Lore & Karakter: ${refLore}
+
+[GLOSARIUM TERIKAT (PILIHAN ISTILAH MANDATORI)]
+${glossaryPrompt}
+
+[TEKS ASLI CHAPTER (${bahasa_sumber || 'Asli'})]
+${teks_asli}
+
+Terjemahkan teks di atas ke ${bahasa_target || 'Target'} sesuai aturan dan glosarium di atas:`;
       let translatedText = '';
 
       if (provider === 'openrouter') {
