@@ -22,6 +22,9 @@ async function startServer() {
   const isProduction = process.env.NODE_ENV === 'production' || currentFilename.includes('dist');
   app.disable('x-powered-by'); // audit #10
 
+  // Pastikan file prompt eksternal prompt/translation.md tersedia
+  ensurePromptTemplateFile();
+
   // Security headers (audit #9, #20)
   app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -123,6 +126,99 @@ async function startServer() {
       clearTimeout(timer);
     }
   }
+
+// In-memory cached prompt template with mtime tracking for zero-cost hot-reloading
+let cachedPromptTemplate: { systemInstructionTemplate: string; userPromptTemplate: string } | null = null;
+let cachedPromptMtime = 0;
+
+// Helper: Load & Format Translation Prompt Template from prompt/translation.md
+function getTranslationPromptTemplate(): { systemInstructionTemplate: string; userPromptTemplate: string } {
+  const promptPaths = [
+    path.join(process.cwd(), 'prompt', 'translation.md'),
+    path.join(process.cwd(), 'prompts', 'translation.md'),
+  ];
+
+  for (const p of promptPaths) {
+    if (fs.existsSync(p)) {
+      try {
+        const stat = fs.statSync(p);
+        if (cachedPromptTemplate && cachedPromptMtime === stat.mtimeMs) {
+          return cachedPromptTemplate;
+        }
+
+        const content = fs.readFileSync(p, 'utf-8');
+        const sysMatch = content.match(/##\s*SYSTEM INSTRUCTION\s*([\s\S]*?)(?=---\s*|\n##\s*USER PROMPT|$)/i);
+        const userMatch = content.match(/##\s*USER PROMPT\s*([\s\S]*?)$/i);
+
+        if (sysMatch && userMatch) {
+          cachedPromptTemplate = {
+            systemInstructionTemplate: sysMatch[1].trim(),
+            userPromptTemplate: userMatch[1].trim(),
+          };
+          cachedPromptMtime = stat.mtimeMs;
+          return cachedPromptTemplate;
+        }
+      } catch (err) {
+        console.warn('Failed reading external prompt template from', p, err);
+      }
+    }
+  }
+
+  // Built-in fallback
+  return {
+    systemInstructionTemplate: `Anda adalah seorang penerjemah novel profesional berpengalaman tinggi dari bahasa {{BAHASA_SUMBER}} ke {{BAHASA_TARGET}}.
+Tugas Anda adalah menerjemahkan bab novel berikut secara akurat, alami, puitis jika diperlukan, dan mempertahankan aliran emosi cerita tanpa memotong paragraf atau menghilangkan detail penting.
+
+ATURAN WAJIB penerjemahan:
+1. HARUS mematuhi Glosarium Terikat di bawah ini secara konsisten. Jangan mengubah istilah yang sudah ditetapkan di Glosarium.
+2. HARUS menyelaraskan gaya bahasa dan nada cerita dengan Panduan Gaya & Lore yang diberikan.
+3. KONSISTENSI SUDUT PANDANG (POV): Gunakan satu sudut pandang (Point of View / POV) yang KONSISTEN di seluruh bab. DILARANG KERAS berpindah POV secara acak (misalnya tiba-tiba berubah dari orang pertama "aku/saya" ke orang ketiga "dia/nama karakter" atau sebaliknya antar paragraf). Pertahankan konsistensi narator dari awal hingga akhir bab, terutama saat menerjemahkan bahasa dengan subjek tersirat (seperti bahasa Jepang).
+4. KONSISTENSI PRONOUN & GENDER KARAKTER: Untuk setiap karakter / nama yang memiliki tag Gender di Glosarium (Male / Female), WAJIB menggunakan pronoun yang sesuai (Male -> he/him/his/himself; Female -> she/her/hers/herself; Neutral -> they/them/it). DILARANG KERAS menukar pronoun he/she pada karakter yang sudah ditentukan gendernya dalam bahasa Inggris.
+5. Pertahankan tata letak paragraf asli dan pemisah antar dialog.
+6. Baris pertama dari hasil terjemahan HARUS diawali dengan tag [JUDUL_BAB: Judul Bab Yang Menarik Dalam Bahasa {{BAHASA_TARGET}}] jika diminta atau jika judul bab belum spesifik, kemudian ikuti dengan teks terjemahan selengkapnya.
+7. Jangan tambahkan komentar meta, pendahuluan, atau catatan kaki dari penerjemah. HANYA hasilkan teks terjemahan novel langsung.
+{{CUSTOM_INSTRUCTIONS}}`,
+    userPromptTemplate: `[JUDUL NOVEL]
+{{JUDUL_NOVEL}} - Chapter {{NOMOR_CHAPTER}}
+
+[PANDUAN REFERENSI & TONE]
+- Sinopsis / Gambaran Cerita: {{SYNOPSIS}}
+- Gaya Bahasa & Nada: {{WRITING_STYLE}}
+- Detail Lore & Karakter: {{LORE_SUMMARY}}
+
+[GLOSARIUM TERIKAT (PILIHAN ISTILAH MANDATORI)]
+{{GLOSSARY_ITEMS}}
+
+[TEKS ASLI CHAPTER ({{BAHASA_SUMBER}})]
+{{TEKS_ASLI}}
+
+Terjemahkan teks di atas ke {{BAHASA_TARGET}} sesuai aturan dan glosarium di atas:`,
+  };
+}
+
+// Single-pass token replacer: O(N) efficiency and immune to cascading injection
+function renderPromptTemplate(template: string, vars: Record<string, string>): string {
+  return template.replace(/\{\{([A-Z0-9_]+)\}\}/g, (match, key) => {
+    return Object.prototype.hasOwnProperty.call(vars, key) ? vars[key] : match;
+  });
+}
+function ensurePromptTemplateFile(): void {
+  const promptDir = path.join(process.cwd(), 'prompt');
+  const promptFile = path.join(promptDir, 'translation.md');
+  if (!fs.existsSync(promptFile)) {
+    try {
+      if (!fs.existsSync(promptDir)) {
+        fs.mkdirSync(promptDir, { recursive: true });
+      }
+      const { systemInstructionTemplate, userPromptTemplate } = getTranslationPromptTemplate();
+      const defaultContent = `# Template Prompt Penerjemahan Novel\n\nFile ini digunakan oleh server untuk merakit prompt penerjemahan bab novel.\nAnda dapat mengedit instruksi, aturan, atau gaya terjemahan langsung di file ini tanpa harus memodifikasi kode sumber.\nPerubahan pada file ini akan langsung diterapkan secara otomatis (Hot-Reload).\n\n---\n\n## SYSTEM INSTRUCTION\n${systemInstructionTemplate}\n\n---\n\n## USER PROMPT\n${userPromptTemplate}\n`;
+      fs.writeFileSync(promptFile, defaultContent, 'utf-8');
+    } catch (e) {
+      console.warn('Failed auto-creating prompt/translation.md:', e);
+    }
+  }
+}
+
 
   // Helper: OpenRouter API Call
   const callOpenRouter = async ({
@@ -1304,34 +1400,27 @@ async function startServer() {
       const refStyle = reference_data?.writing_style || 'Gaya penerjemahan novel fiksi standar.';
       const refLore = reference_data?.lore_summary || 'Tidak ada catatan lore tambahan.';
 
-      const systemInstruction = `Anda adalah seorang penerjemah novel profesional berpengalaman tinggi dari bahasa ${bahasa_sumber} ke ${bahasa_target}.
-Tugas Anda adalah menerjemahkan bab novel berikut secara akurat, alami, puitis jika diperlukan, dan mempertahankan aliran emosi cerita tanpa memotong paragraf atau menghilangkan detail penting.
+      const { systemInstructionTemplate, userPromptTemplate } = getTranslationPromptTemplate();
 
-ATURAN WAJIB penerjemahan:
-1. HARUS mematuhi Glosarium Terikat di bawah ini secara konsisten. Jangan mengubah istilah yang sudah ditetapkan di Glosarium.
-2. HARUS menyelaraskan gaya bahasa dan nada cerita dengan Panduan Gaya & Lore yang diberikan.
-3. KONSISTENSI SUDUT PANDANG (POV): Gunakan satu sudut pandang (Point of View / POV) yang KONSISTEN di seluruh bab. DILARANG KERAS berpindah POV secara acak (misalnya tiba-tiba berubah dari orang pertama "aku/saya" ke orang ketiga "dia/nama karakter" atau sebaliknya antar paragraf). Pertahankan konsistensi narator dari awal hingga akhir bab, terutama saat menerjemahkan bahasa dengan subjek tersirat (seperti bahasa Jepang).
-4. KONSISTENSI PRONOUN & GENDER KARAKTER: Untuk setiap karakter / nama yang memiliki tag Gender di Glosarium (Male / Female), WAJIB menggunakan pronoun yang sesuai (Male -> he/him/his/himself; Female -> she/her/hers/herself; Neutral -> they/them/it). DILARANG KERAS menukar pronoun he/she pada karakter yang sudah ditentukan gendernya dalam bahasa Inggris.
-5. Pertahankan tata letak paragraf asli dan pemisah antar dialog.
-6. Baris pertama dari hasil terjemahan HARUS diawali dengan tag [JUDUL_BAB: Judul Bab Yang Menarik Dalam Bahasa ${bahasa_target}] jika diminta atau jika judul bab belum spesifik, kemudian ikuti dengan teks terjemahan selengkapnya.
-7. Jangan tambahkan komentar meta, pendahuluan, atau catatan kaki dari penerjemah. HANYA hasilkan teks terjemahan novel langsung.
-${custom_instructions ? `8. Instruksi Tambahan Pengguna: ${custom_instructions}` : ''}`;
-      const prompt = `[JUDUL NOVEL]
-${judul_novel || 'Novel'} - Chapter ${nomor_chapter || 1}
+      const customInstructionText = custom_instructions
+        ? `8. Instruksi Tambahan Pengguna: ${custom_instructions}`
+        : '';
 
-[PANDUAN REFERENSI & TONE]
-- Sinopsis / Gambaran Cerita: ${refSynopsis}
-- Gaya Bahasa & Nada: ${refStyle}
-- Detail Lore & Karakter: ${refLore}
+      const templateVariables: Record<string, string> = {
+        BAHASA_SUMBER: String(bahasa_sumber || 'Asli'),
+        BAHASA_TARGET: String(bahasa_target || 'Target'),
+        JUDUL_NOVEL: String(judul_novel || 'Novel'),
+        NOMOR_CHAPTER: String(nomor_chapter || 1),
+        SYNOPSIS: String(refSynopsis),
+        WRITING_STYLE: String(refStyle),
+        LORE_SUMMARY: String(refLore),
+        GLOSSARY_ITEMS: String(glossaryPrompt),
+        TEKS_ASLI: String(teks_asli),
+        CUSTOM_INSTRUCTIONS: customInstructionText,
+      };
 
-[GLOSARIUM TERIKAT (PILIHAN ISTILAH MANDATORI)]
-${glossaryPrompt}
-
-[TEKS ASLI CHAPTER (${bahasa_sumber})]
-${teks_asli}
-
-Terjemahkan teks di atas ke ${bahasa_target} sesuai aturan dan glosarium di atas:`;
-
+      const systemInstruction = renderPromptTemplate(systemInstructionTemplate, templateVariables);
+      const prompt = renderPromptTemplate(userPromptTemplate, templateVariables);
       let translatedText = '';
 
       if (provider === 'openrouter') {

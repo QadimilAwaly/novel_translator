@@ -376,6 +376,25 @@ describe('Server-Backed Persistent Storage & Config Stability', () => {
     assert.ok(panelContent.includes("+ Gender"), 'ContextPanel should show + Gender button for untagged character names');
     assert.ok(serverContent.includes('WAJIB PRONOUN') || serverContent.includes('he/him/his'), 'server.ts should inject pronoun rules for gendered glossary items');
   });
+  test('external translation prompt in /prompt/translation.md should be loaded and formatted with variables', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const promptFile = path.join(process.cwd(), 'prompt', 'translation.md');
+    const serverContent = fs.readFileSync(path.join(process.cwd(), 'server.ts'), 'utf-8');
+
+    assert.ok(fs.existsSync(promptFile), 'prompt/translation.md should exist');
+    const promptContent = fs.readFileSync(promptFile, 'utf-8');
+    assert.ok(promptContent.includes('## SYSTEM INSTRUCTION'), 'translation.md should contain SYSTEM INSTRUCTION section');
+    assert.ok(promptContent.includes('## USER PROMPT'), 'translation.md should contain USER PROMPT section');
+    assert.ok(promptContent.includes('{{BAHASA_SUMBER}}'), 'translation.md should have {{BAHASA_SUMBER}} variable');
+    assert.ok(promptContent.includes('{{BAHASA_TARGET}}'), 'translation.md should have {{BAHASA_TARGET}} variable');
+    assert.ok(promptContent.includes('{{GLOSSARY_ITEMS}}'), 'translation.md should have {{GLOSSARY_ITEMS}} variable');
+    assert.ok(promptContent.includes('{{TEKS_ASLI}}'), 'translation.md should have {{TEKS_ASLI}} variable');
+
+    assert.ok(serverContent.includes('getTranslationPromptTemplate'), 'server.ts should have getTranslationPromptTemplate');
+    assert.ok(serverContent.includes('renderPromptTemplate'), 'server.ts should have renderPromptTemplate');
+    assert.ok(serverContent.includes('ensurePromptTemplateFile'), 'server.ts should have ensurePromptTemplateFile');
+  });
 });
 
 console.log('\n=== Unit Tests Complete ===\n');
