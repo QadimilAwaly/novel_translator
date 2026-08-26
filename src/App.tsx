@@ -736,15 +736,27 @@ export default function App() {
 
     setIsExtracting(true);
     try {
-      const existingTermsList = glossaries.map((g) => g.istilah_asli);
+      const relevantGlossaries = filterRelevantGlossaries(activeChapter.teks_asli, glossaries);
+      const relevantReferences = filterRelevantReferences(activeChapter.teks_asli, references);
 
       const result = await extractGlossaryApi({
         teks_asli: activeChapter.teks_asli,
         teks_terjemahan: activeChapter.teks_terjemahan,
         nomor_chapter: activeChapter.nomor_chapter,
-        existing_glossary: existingTermsList,
         bahasa_sumber: activeNovel?.bahasa_sumber || 'Mandarin',
         bahasa_target: activeNovel?.bahasa_target || 'Indonesia',
+        reference_data: {
+          synopsis,
+          writing_style: writingStyle,
+          lore_summary: relevantReferences.map((r) => `[${r.kategori}] ${r.nama_item}: ${r.deskripsi}`).join('\n'),
+        },
+        existing_glossary: relevantGlossaries.map((g) => ({
+          istilah_asli: g.istilah_asli,
+          istilah_terjemahan: g.istilah_terjemahan,
+          kategori: g.kategori,
+          gender: g.gender,
+          konteks: g.konteks,
+        })),
         ai_config: {
           provider: aiConfig.provider,
           model: aiConfig.model,

@@ -1448,7 +1448,7 @@ Terjemahkan teks di atas ke ${bahasa_target || 'Target'} sesuai aturan dan glosa
   // API Route: Extract & Sync Glossary (Phase 3 Progression & Auto Extraction)
   app.post('/api/extract-glossary', rateLimit(20, 60000), async (req, res) => {
     try {
-      const { teks_asli, teks_terjemahan, nomor_chapter, existing_glossary, bahasa_sumber, bahasa_target, ai_config } = req.body;
+      const { teks_asli, teks_terjemahan, nomor_chapter, existing_glossary, reference_data, bahasa_sumber, bahasa_target, ai_config } = req.body;
 
       if (!teks_asli || !teks_terjemahan) {
         return res.status(400).json({ error: 'Teks asli dan teks terjemahan diperlukan untuk ekstraksi glosarium.' });
@@ -1464,18 +1464,33 @@ Terjemahkan teks di atas ke ${bahasa_target || 'Target'} sesuai aturan dan glosa
       // API key resolve server-side (audit #2)
       const apiKeyOverride = provider === 'openrouter' ? (config.openrouter_api_key || process.env.OPENROUTER_API_KEY) : (config.gemini_api_key || process.env.GEMINI_API_KEY);
 
-      const existingTermsList = Array.isArray(existing_glossary) ? existing_glossary.join(', ') : 'Belum ada';
+      const formattedExistingGlossary = Array.isArray(existing_glossary) && existing_glossary.length > 0
+        ? existing_glossary.map((item: unknown) => {
+            if (typeof item === 'string') return `- "${item}"`;
+            if (item && typeof item === 'object') {
+              const g = item as Record<string, unknown>;
+              const genderInfo = g.gender ? `, Gender: ${g.gender}` : '';
+              return `- "${g.istilah_asli}" -> "${g.istilah_terjemahan}" [Kategori: ${g.kategori || 'Istilah Khusus'}${genderInfo}${g.konteks ? `, Konteks: ${g.konteks}` : ''}]`;
+            }
+            return '';
+          }).filter(Boolean).join('\n')
+        : 'Belum ada istilah terdaftar.';
+
+      const refSynopsis = reference_data?.synopsis || '';
+      const refLore = reference_data?.lore_summary || '';
 
       const prompt = `Analisis teks asli (${sourceLang}) dan teks terjemahan (${targetLang}) dari Chapter ${nomor_chapter} berikut:
 
+${refSynopsis || refLore ? `[PANDUAN REFERENSI & LORE NOVEL]
+${refSynopsis ? `- Sinopsis: ${refSynopsis}\n` : ''}${refLore ? `- Detail Lore & Karakter:\n${refLore}\n` : ''}` : ''}
+[GLOSARIUM RELEVAN YANG SUDAH TERDAFTAR (WAJIB DIIKUTI KONSISTENSINYA)]
+${formattedExistingGlossary}
+
 [TEKS ASLI (${sourceLang})]
-${teks_asli.slice(0, 4000)}
+${teks_asli.slice(0, 5000)}
 
 [TEKS TERJEMAHAN (${targetLang})]
-${teks_terjemahan.slice(0, 4000)}
-
-[ISTILAH YANG SUDAH ADA DILANJUTKAN (ABAIKAN KECUALI PERLU DIPERBARUI)]
-${existingTermsList}
+${teks_terjemahan.slice(0, 5000)}
 
 Tugas Anda:
 Ekstrak semua istilah baru yang penting yang muncul dalam chapter ini dari bahasa sumber (${sourceLang}) ke bahasa target (${targetLang}), meliputi:
@@ -1485,11 +1500,15 @@ Ekstrak semua istilah baru yang penting yang muncul dalam chapter ini dari bahas
 4. Item Khusus, Senjata, Artefak, Ramuan
 5. Istilah Khusus Novel / Lore Unik
 
-PENTING:
-- 'istilah_asli' HARUS berupa kata/frasa dalam bahasa sumber (${sourceLang}).
-- 'istilah_terjemahan' HARUS berupa padanan/terjemahan resmi dalam bahasa target (${targetLang}), BUKAN bahasa lain.
-- Jika kategori adalah "Nama", tentukan 'gender' ("Male" untuk pria, "Female" untuk wanita, "Neutral" untuk lainnya) untuk memastikan konsistensi pronoun bahasa Inggris (he vs she).
-- 'konteks' berupa catatan singkat dalam bahasa target (${targetLang}).
+ATURAN KONSISTENSI & LARANGAN:
+1. KONSISTENSI KATA TURUNAN / NAMA KELUARGA / IBU-ANAK:
+   Jika menemukan istilah/nama baru yang mengandung kata atau nama keluarga yang sudah terdaftar di Glosarium di atas (contoh: glosarium memiliki "ルカリム" -> "Lukalim", dan di bab ini muncul nama karakter "エルストラ・コーズ・ルカリム"), Anda WAJIB menggunakan ejaan baku yang sudah terdaftar ("Lukalim" -> "Elstra Coz Lukalim"). DILARANG KERAS membuat variasi ejaan baru (seperti "Lucalym")!
+2. DILARANG mengekstrak ulang istilah yang sudah terdaftar di Glosarium di atas.
+3. DILARANG mengekstrak kalimat dialog biasa, seruan, mantra panjang utuh, atau kata benda umum sehari-hari (seperti "buku", "tas", "pakaian"). HANYA ekstrak nama entitas dan istilah khusus yang berharga.
+4. 'istilah_asli' HARUS berupa kata/frasa dalam bahasa sumber (${sourceLang}).
+5. 'istilah_terjemahan' HARUS berupa padanan/terjemahan resmi dalam bahasa target (${targetLang}), BUKAN bahasa lain.
+6. Jika kategori adalah "Nama", tentukan 'gender' ("Male" untuk pria, "Female" untuk wanita, "Neutral" untuk lainnya) untuk memastikan konsistensi pronoun bahasa Inggris (he vs she).
+7. 'konteks' berupa catatan singkat dalam bahasa target (${targetLang}).
 
 Kembalikan respon DALAM FORMAT JSON SAJA dengan skema:
 {
@@ -1504,7 +1523,6 @@ Kembalikan respon DALAM FORMAT JSON SAJA dengan skema:
   ]
 }
 HANYA ekstrak istilah yang penting dan benar-benar berguna untuk konsistensi bab selanjutnya.`;
-
       let parsed = { terms: [] };
 
       if (provider === 'openrouter') {

@@ -125,7 +125,18 @@ export interface ExtractGlossaryRequest {
   teks_asli: string;
   teks_terjemahan: string;
   nomor_chapter: string | number;
-  existing_glossary: string[];
+  existing_glossary: Array<{
+    istilah_asli: string;
+    istilah_terjemahan: string;
+    kategori: string;
+    gender?: GenderTag;
+    konteks?: string;
+  }> | string[];
+  reference_data?: {
+    synopsis: string;
+    writing_style: string;
+    lore_summary: string;
+  };
   bahasa_sumber?: LanguageCode;
   bahasa_target?: LanguageCode;
   ai_config?: {

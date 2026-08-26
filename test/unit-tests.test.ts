@@ -348,17 +348,18 @@ describe('Server-Backed Persistent Storage & Config Stability', () => {
     assert.ok(storageContent.includes('deleteStoredReference'), 'storage.ts should export deleteStoredReference');
   });
 
-  test('glossary extraction should respect target language in prompt and API schema', () => {
+  test('glossary extraction should scan and inject relevant glossary terms and lore references', () => {
     const fs = require('fs');
     const path = require('path');
     const serverContent = fs.readFileSync(path.join(process.cwd(), 'server.ts'), 'utf-8');
     const typesContent = fs.readFileSync(path.join(process.cwd(), 'src', 'types.ts'), 'utf-8');
     const appContent = fs.readFileSync(path.join(process.cwd(), 'src', 'App.tsx'), 'utf-8');
 
-    assert.ok(typesContent.includes('bahasa_target?: LanguageCode;'), 'ExtractGlossaryRequest should have optional bahasa_target');
-    assert.ok(serverContent.includes('bahasa_target'), 'server.ts /api/extract-glossary should accept bahasa_target');
-    assert.ok(serverContent.includes('${targetLang}'), 'server.ts /api/extract-glossary prompt should interpolate targetLang');
-    assert.ok(appContent.includes('bahasa_target: activeNovel?.bahasa_target'), 'App.tsx should pass activeNovel target language to extractGlossaryApi');
+    assert.ok(typesContent.includes('reference_data?:'), 'ExtractGlossaryRequest should have optional reference_data');
+    assert.ok(appContent.includes('filterRelevantGlossaries(activeChapter.teks_asli, glossaries)'), 'App.tsx should filter relevant glossaries for extraction');
+    assert.ok(appContent.includes('filterRelevantReferences(activeChapter.teks_asli, references)'), 'App.tsx should filter relevant references for extraction');
+    assert.ok(serverContent.includes('GLOSARIUM RELEVAN YANG SUDAH TERDAFTAR'), 'server.ts should inject relevant existing glossary');
+    assert.ok(serverContent.includes('PANDUAN REFERENSI & LORE NOVEL'), 'server.ts should inject reference lore if present');
   });
   test('glossary items should support gender tags for character names to prevent pronoun errors in English translation', () => {
     const fs = require('fs');
