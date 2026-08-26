@@ -14,7 +14,8 @@ import {
   deleteStoredChapter,
   renameStoredNovel,
   deleteStoredGlossary,
-  deleteStoredReference
+  deleteStoredReference,
+  LibraryStorageData
 } from './services/storage';
 import { translateChapterApi, extractGlossaryApi } from './services/api';
 import { filterRelevantGlossaries, filterRelevantReferences } from './services/contextFilter';
@@ -133,62 +134,76 @@ export default function App() {
     showToast(`Pengaturan tersimpan ke config.json (${newConfig.provider.toUpperCase()}: ${newConfig.model}).`);
   };
 
-  // 1. Initial Load of Novels (from server disk, fallback to local)
-  useEffect(() => {
-    fetchServerStorage()
-      .then((serverData) => {
-        if (serverData && Array.isArray(serverData.novels) && serverData.novels.length > 0) {
-          setNovels(serverData.novels);
-          setActiveNovelId((prev) => prev || serverData.novels[0].id);
-        } else {
-          const loadedNovels = getStoredNovels();
-          setNovels(loadedNovels);
-          if (loadedNovels.length > 0) {
-            setActiveNovelId((prev) => prev || loadedNovels[0].id);
-          }
-        }
-      })
-      .catch(() => {
-        const loadedNovels = getStoredNovels();
-        setNovels(loadedNovels);
-        if (loadedNovels.length > 0) {
-          setActiveNovelId((prev) => prev || loadedNovels[0].id);
-        }
-      });
-  }, []);
-  // 2. Load Chapters, References, Glossaries when Active Novel changes
-  useEffect(() => {
-    if (!activeNovelId) return;
-
-    // Load Chapters for this novel
-    const loadedChapters = getStoredChapters(activeNovelId);
+  // Helper: Load in-memory state for active novel from serverData or localStorage
+  const loadNovelData = (novelId: string, serverData?: LibraryStorageData | null) => {
+    // 1. Chapters
+    const loadedChapters = serverData?.chapters && serverData.chapters.length > 0
+      ? serverData.chapters.filter((c) => c.novel_id === novelId)
+      : getStoredChapters(novelId);
     setChapters(loadedChapters);
     if (loadedChapters.length > 0) {
-      setActiveChapterId(loadedChapters[0].id);
+      setActiveChapterId((prev) => (loadedChapters.some((c) => c.id === prev) ? prev : loadedChapters[0].id));
     } else {
       setActiveChapterId(null);
     }
 
-    // Load References for this novel
-    const loadedRefs = getStoredReferences(activeNovelId);
+    // 2. References
+    const loadedRefs = serverData?.references && serverData.references.length > 0
+      ? serverData.references.filter((r) => r.novel_id === novelId)
+      : getStoredReferences(novelId);
     setReferences(loadedRefs);
 
     const styleRef = loadedRefs.find((r) => r.kategori === 'Gaya Bahasa');
     setWritingStyle(styleRef?.deskripsi || '');
 
-    const synopsisRef = loadedRefs.find((r) => r.nama_item.toLowerCase().includes('sinopsis'));
+    const synopsisRef = loadedRefs.find((r) => r.nama_item?.toLowerCase().includes('sinopsis'));
     setSynopsis(synopsisRef?.deskripsi || 'Satu pahlawan bangkit menghadapi bencana surgawi.');
 
-    // Load Glossaries for this novel
-    const loadedGloss = getStoredGlossaries(activeNovelId);
+    // 3. Glossaries
+    const loadedGloss = serverData?.glossaries && serverData.glossaries.length > 0
+      ? serverData.glossaries.filter((g) => g.novel_id === novelId)
+      : getStoredGlossaries(novelId);
     setGlossaries(loadedGloss);
 
     setPromptStats({
       glossaryCount: loadedGloss.length,
       hasReference: loadedRefs.length > 0,
     });
-  }, [activeNovelId]);
+  };
 
+  // Helper: Reload full library directly from server disk
+  const reloadLibraryFromDisk = async (preferredNovelId?: string) => {
+    try {
+      const serverData = await fetchServerStorage();
+      if (serverData && Array.isArray(serverData.novels) && serverData.novels.length > 0) {
+        setNovels(serverData.novels);
+        const targetId = preferredNovelId || activeNovelId || serverData.novels[0].id;
+        setActiveNovelId(targetId);
+        loadNovelData(targetId, serverData);
+        return true;
+      }
+    } catch (e) {
+      console.warn('Failed reloading storage from server disk:', e);
+    }
+    return false;
+  };
+
+  // 1. Initial Load of Novels & Auto-Reload on Mount & Window Focus
+  useEffect(() => {
+    reloadLibraryFromDisk();
+
+    const handleFocus = () => {
+      reloadLibraryFromDisk();
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, []);
+
+  // 2. Load Chapters, References, Glossaries when Active Novel changes
+  useEffect(() => {
+    if (!activeNovelId) return;
+    loadNovelData(activeNovelId);
+  }, [activeNovelId]);
   const activeNovel = novels.find((n) => n.id === activeNovelId) || null;
   const activeChapter = chapters.find((c) => c.id === activeChapterId) || null;
 
@@ -845,12 +860,19 @@ export default function App() {
         onUpdateNovelLanguages={handleUpdateNovelLanguages}
         onSelectFolderForActiveNovel={handleSelectFolderForActiveNovel}
         onReExportNovelToLocal={handleReExportNovelToLocal}
+        onReloadFromDisk={async () => {
+          const success = await reloadLibraryFromDisk();
+          if (success) {
+            showToast('Seluruh data novel, bab, dan glosarium berhasil dimuat ulang dari disk!');
+          } else {
+            showToast('Gagal memuat ulang data dari disk.');
+          }
+        }}
         isLeftSidebarOpen={isLeftSidebarOpen}
         isRightPanelOpen={isRightPanelOpen}
         onToggleLeftSidebar={() => setIsLeftSidebarOpen((prev) => !prev)}
         onToggleRightPanel={() => setIsRightPanelOpen((prev) => !prev)}
       />
-      {/* 3-Panel Main Layout Container */}
       <main className="flex-1 flex flex-row overflow-hidden relative min-h-0 min-w-0">
         {/* Panel 1: Navigasi Novel & Chapter (Left) */}
         {isLeftSidebarOpen && (

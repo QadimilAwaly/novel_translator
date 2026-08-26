@@ -393,6 +393,17 @@ describe('Server-Backed Persistent Storage & Config Stability', () => {
     assert.ok(serverContent.includes('renderPromptTemplate'), 'server.ts should have renderPromptTemplate');
     assert.ok(serverContent.includes('ensurePromptTemplateFile'), 'server.ts should have ensurePromptTemplateFile');
   });
+  test('App.tsx and Header.tsx should support live reload from server disk', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const appContent = fs.readFileSync(path.join(process.cwd(), 'src', 'App.tsx'), 'utf-8');
+    const headerContent = fs.readFileSync(path.join(process.cwd(), 'src', 'components', 'Header.tsx'), 'utf-8');
+
+    assert.ok(appContent.includes('reloadLibraryFromDisk'), 'App.tsx should have reloadLibraryFromDisk');
+    assert.ok(appContent.includes('onReloadFromDisk'), 'App.tsx should pass onReloadFromDisk to Header');
+    assert.ok(headerContent.includes('onReloadFromDisk'), 'Header.tsx should accept onReloadFromDisk');
+    assert.ok(headerContent.includes('Reload dari Disk'), 'Header.tsx should render Reload dari Disk button');
+  });
 });
 
 console.log('\n=== Unit Tests Complete ===\n');
