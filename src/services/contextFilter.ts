@@ -7,7 +7,7 @@ import { GlossaryItem, ReferenceItem } from '../types';
 export function cleanSearchKeyword(term: string): string {
   return term
     .toLowerCase()
-    .replace(/[^\w\u4e00-\u9fa5\u3040-\u30ff\uac00-\ud7af]/g, '')
+    .replace(/[^\p{L}\p{N}\u4e00-\u9fa5\u3040-\u30ff\u3400-\u4dbf\uac00-\ud7af]/gu, '')
     .trim();
 }
 
@@ -39,7 +39,7 @@ function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-const PURE_CJK_REGEX = /^[\u4e00-\u9fa5\u3040-\u30ff\uac00-\ud7af]+$/;
+const PURE_CJK_REGEX = /^[\u4e00-\u9fa5\u3040-\u30ff\u3400-\u4dbf\uac00-\ud7af]+$/;
 
 /**
  * Returns candidate sub-keywords for matching a glossary/reference term against chapter text.
@@ -73,7 +73,7 @@ export function getKeywordsForMatching(termStr: string): string[] {
 /**
  * Checks if a candidate keyword/term matches within lowerText.
  * - For pure CJK candidates: uses substring includes without word boundary.
- * - For Latin / mixed candidates: uses word-boundary regex \b...\b to prevent cross-word false matches.
+ * - For Latin / mixed / Unicode terms: uses Unicode-aware word boundary lookarounds.
  * - Accepts length >= 1 for CJK, length >= 2 for Latin, and length === 1 for Latin Unicode letters.
  */
 function isCandidateMatching(candidate: string, lowerText: string): boolean {
@@ -85,20 +85,20 @@ function isCandidateMatching(candidate: string, lowerText: string): boolean {
     return lowerText.includes(candLower);
   }
 
-  // Latin / Mixed terms: use word boundary to avoid false positives on partial words (e.g. "ring" matching "ringing")
+  // Latin / Mixed / Unicode terms: use Unicode-aware word boundary lookarounds
   if (candidate.length >= 2) {
     try {
-      const regex = new RegExp(`\\b${escapeRegex(candLower)}\\b`, 'i');
+      const regex = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegex(candLower)}(?![\\p{L}\\p{N}])`, 'iu');
       return regex.test(lowerText);
     } catch {
       return lowerText.includes(candLower);
     }
   }
 
-  // Single-character Latin/letter: require word boundary
+  // Single-character Latin/letter: require Unicode word boundary
   if (candidate.length === 1 && /\p{L}/u.test(candidate)) {
     try {
-      const regex = new RegExp(`\\b${escapeRegex(candLower)}\\b`, 'i');
+      const regex = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegex(candLower)}(?![\\p{L}\\p{N}])`, 'iu');
       return regex.test(lowerText);
     } catch {
       return lowerText.includes(candLower);
@@ -123,8 +123,8 @@ export function filterRelevantGlossaries(
   const lowerText = text.toLowerCase();
 
   return glossaries.filter((item) => {
-    // 1. Direct raw whole-term match check on original term (fast path)
-    if (lowerText.includes(item.istilah_asli.toLowerCase())) {
+    // 1. Fast path for pure CJK whole-term (CJK scripts have no spaces/word boundaries)
+    if (PURE_CJK_REGEX.test(item.istilah_asli) && lowerText.includes(item.istilah_asli.toLowerCase())) {
       return true;
     }
 

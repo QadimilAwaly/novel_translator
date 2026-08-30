@@ -9,7 +9,7 @@
 
 import { test, describe } from 'bun:test';
 import assert from 'assert';
-import { filterRelevantGlossaries, getKeywordsForMatching } from '../src/services/contextFilter';
+import { filterRelevantGlossaries, getKeywordsForMatching, cleanSearchKeyword } from '../src/services/contextFilter';
 import { GlossaryItem } from '../src/types';
 
 function createMockGlossary(terms: string[]): GlossaryItem[] {
@@ -138,3 +138,109 @@ describe('filterRelevantGlossaries (BUG-02 & BUG-03 Fix Verification)', () => {
     assert.deepEqual(filterRelevantGlossaries('Some chapter text', []), []);
   });
 });
+
+describe('cleanSearchKeyword (Step 5 Unicode Widening)', () => {
+  test('Preserves accented Latin characters (French, Spanish, German, Portuguese)', () => {
+    assert.equal(cleanSearchKeyword('François'), 'françois');
+    assert.equal(cleanSearchKeyword('Héloïse'), 'héloïse');
+    assert.equal(cleanSearchKeyword('Café'), 'café');
+    assert.equal(cleanSearchKeyword('García Señor'), 'garcíaseñor');
+    assert.equal(cleanSearchKeyword('König & Straße'), 'königstraße');
+  });
+
+  test('Preserves Vietnamese characters with complex diacritics', () => {
+    assert.equal(cleanSearchKeyword('Đức'), 'đức');
+    assert.equal(cleanSearchKeyword('Hương'), 'hương');
+    assert.equal(cleanSearchKeyword('Võ Thuật'), 'võthuật');
+    assert.equal(cleanSearchKeyword('Nguyễn'), 'nguyễn');
+  });
+
+  test('Preserves CJK Extension A characters', () => {
+    assert.equal(cleanSearchKeyword('刘䶮'), '刘䶮'); // U+4DAE in CJK Extension A
+    assert.equal(cleanSearchKeyword('㐀'), '㐀'); // U+3400 in CJK Extension A
+  });
+
+  test('Strips non-alphanumeric punctuation and symbols', () => {
+    assert.equal(cleanSearchKeyword('Spatial Ring / 储物戒! [Rare]'), 'spatialring储物戒rare');
+  });
+});
+
+describe('filterRelevantGlossaries (Step 5 Unicode & Multilingual Integration)', () => {
+  test('Accented Latin: Matches exact accented word ("François")', () => {
+    const glossaries = createMockGlossary(['François']);
+    const chapterText = 'Le jeune chevalier François tira son épée avec bravoure.';
+    const result = filterRelevantGlossaries(chapterText, glossaries);
+
+    assert.equal(result.length, 1);
+    assert.equal(result[0].istilah_asli, 'François');
+  });
+
+  test('Accented Latin Negative Sibling: Partial sub-word ("François" vs "Franconville") does NOT match', () => {
+    const glossaries = createMockGlossary(['François']);
+    const chapterText = 'Ils ont voyagé toute la nuit jusqu au village de Franconville.';
+    const result = filterRelevantGlossaries(chapterText, glossaries);
+
+    assert.equal(result.length, 0, 'Should not match partial word Franconville');
+  });
+
+  test('Accented Latin Word-Boundary: Term ending in accent ("Café") matches standalone word', () => {
+    const glossaries = createMockGlossary(['Café']);
+    const chapterText = 'Ils sont assis au café près de la fontaine.';
+    const result = filterRelevantGlossaries(chapterText, glossaries);
+
+    assert.equal(result.length, 1);
+    assert.equal(result[0].istilah_asli, 'Café');
+  });
+
+  test('Accented Latin Word-Boundary Negative Sibling: ("Café" vs "Nescafé") does NOT match', () => {
+    const glossaries = createMockGlossary(['Café']);
+    const chapterText = 'Il commanda une tasse de Nescafé instantané.';
+    const result = filterRelevantGlossaries(chapterText, glossaries);
+
+    assert.equal(result.length, 0, 'Should not match Nescafé due to Unicode boundary lookaround');
+  });
+
+  test('Vietnamese: Term ("Đức") matches exact name in chapter', () => {
+    const glossaries = createMockGlossary(['Đức']);
+    const chapterText = 'Đại hiệp Đức bước vào chánh điện với khí thế uy nghiêm.';
+    const result = filterRelevantGlossaries(chapterText, glossaries);
+
+    assert.equal(result.length, 1);
+    assert.equal(result[0].istilah_asli, 'Đức');
+  });
+
+  test('Vietnamese Negative Sibling: Chapter without term ("Đức") does NOT match', () => {
+    const glossaries = createMockGlossary(['Đức']);
+    const chapterText = 'Đoàn người tiến về phía trước trong đêm tối mịt mùng.';
+    const result = filterRelevantGlossaries(chapterText, glossaries);
+
+    assert.equal(result.length, 0);
+  });
+
+  test('Vietnamese Dual-term: ("Hương / Scent") matches Vietnamese text containing Hương', () => {
+    const glossaries = createMockGlossary(['Hương / Scent']);
+    const chapterText = 'Mùi Hương thoang thoảng của hoa sen ngập tràn khắp sân vườn.';
+    const result = filterRelevantGlossaries(chapterText, glossaries);
+
+    assert.equal(result.length, 1);
+    assert.equal(result[0].istilah_asli, 'Hương / Scent');
+  });
+
+  test('CJK Extension A: Term with Extension A char ("刘䶮") matches chapter text', () => {
+    const glossaries = createMockGlossary(['刘䶮 / Emperor Liu']);
+    const chapterText = '南汉开国皇帝刘䶮御驾亲征，平定四方蛮夷。';
+    const result = filterRelevantGlossaries(chapterText, glossaries);
+
+    assert.equal(result.length, 1);
+    assert.equal(result[0].istilah_asli, '刘䶮 / Emperor Liu');
+  });
+
+  test('CJK Extension A Negative Sibling: Chapter without Extension A char does NOT match', () => {
+    const glossaries = createMockGlossary(['刘䶮 / Emperor Liu']);
+    const chapterText = '大军凯旋而归，城中百姓夹道欢迎刘备将军。';
+    const result = filterRelevantGlossaries(chapterText, glossaries);
+
+    assert.equal(result.length, 0);
+  });
+});
+
