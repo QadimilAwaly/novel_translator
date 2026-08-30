@@ -1,26 +1,19 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Novel, Chapter, ReferenceItem, GlossaryItem, ChapterStatus, LanguageCode, AIConfig, GenderTag } from './types';
 import {
-  getStoredNovels,
-  saveStoredNovels,
   getStoredChapters,
   saveStoredChapters,
   getStoredReferences,
   saveStoredReferences,
   getStoredGlossaries,
   saveStoredGlossaries,
-  fetchServerStorage,
-  deleteStoredNovel,
-  deleteStoredChapter,
-  renameStoredNovel,
-  deleteStoredGlossary,
-  deleteStoredReference,
-  LibraryStorageData
 } from './services/storage';
 import { translateChapterApi, extractGlossaryApi, authHeaders } from './services/api';
 import { filterRelevantGlossaries, filterRelevantReferences } from './services/contextFilter';
 import { exportNovelAsFolderZip } from './services/exportZip';
 import { setNovelDirHandle, saveNovelToLocalFS, requestFolderPicker, removeNovelDirHandle } from './services/fileSystemStorage';
+import { useLibrary } from './hooks/useLibrary';
+import { useChapterEditor } from './hooks/useChapterEditor';
 import { Header } from './components/Header';
 import { NovelSidebar } from './components/NovelSidebar';
 import { SplitEditor } from './components/SplitEditor';
@@ -31,19 +24,40 @@ import { NewGlossaryModal } from './components/NewGlossaryModal';
 import { ExportModal } from './components/ExportModal';
 import { ModelSettingsModal } from './components/ModelSettingsModal';
 
+interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+
+interface ToastConfig {
+  message: string;
+  actions?: ToastAction[];
+}
+
 export default function App() {
-  // Main Data States
-  const [novels, setNovels] = useState<Novel[]>([]);
-  const [activeNovelId, setActiveNovelId] = useState<string | null>(null);
+  // Custom Hooks for Subsystem State Isolation (Step 8)
+  const library = useLibrary();
+  const chapterEditor = useChapterEditor();
 
-  const [chapters, setChapters] = useState<Chapter[]>([]);
-  const [activeChapterId, setActiveChapterId] = useState<string | null>(null);
+  const {
+    novels,
+    activeNovelId,
+    activeNovel,
+    reloadLibraryFromDisk,
+  } = library;
 
-  const [references, setReferences] = useState<ReferenceItem[]>([]);
-  const [synopsis, setSynopsis] = useState<string>('');
-  const [writingStyle, setWritingStyle] = useState<string>('');
-
-  const [glossaries, setGlossaries] = useState<GlossaryItem[]>([]);
+  const {
+    chapters,
+    activeChapterId,
+    activeChapter,
+    references,
+    synopsis,
+    writingStyle,
+    glossaries,
+    promptStats,
+    setSynopsis,
+    setWritingStyle,
+  } = chapterEditor;
 
   // Global App Config State (stored in config.json on server)
   const [globalStoragePath, setGlobalStoragePath] = useState<string>('');
@@ -93,14 +107,22 @@ export default function App() {
     }
     return true;
   });
+
   // AI Loading & Notification States
   const [isTranslating, setIsTranslating] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastConfig | null>(null);
 
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 4000);
+  const showToast = (msg: string | ToastConfig) => {
+    if (typeof msg === 'string') {
+      setToast({ message: msg });
+      setTimeout(() => setToast(null), 4000);
+    } else {
+      setToast(msg);
+      if (!msg.actions || msg.actions.length === 0) {
+        setTimeout(() => setToast(null), 4000);
+      }
+    }
   };
 
   const handleSaveAiConfig = async (newConfig: AIConfig, newGlobalPath?: string) => {
@@ -108,7 +130,6 @@ export default function App() {
     if (typeof newGlobalPath === 'string') {
       setGlobalStoragePath(newGlobalPath);
     }
-    // JANGAN simpan API key di localStorage (audit #2) — key hanya disimpan server-side via POST /api/config
 
     try {
       const body: Record<string, unknown> = {
@@ -116,7 +137,6 @@ export default function App() {
         default_provider: newConfig.provider,
         default_model: newConfig.model,
       };
-      // Hanya kirim API key jika user mengisi field — biarkan kosong untuk mempertahankan key server
       if (newConfig.geminiApiKey) body.gemini_api_key = newConfig.geminiApiKey;
       if (newConfig.openrouterApiKey) body.openrouter_api_key = newConfig.openrouterApiKey;
 
@@ -132,62 +152,53 @@ export default function App() {
     showToast(`Pengaturan tersimpan ke config.json (${newConfig.provider.toUpperCase()}: ${newConfig.model}).`);
   };
 
-  // Helper: Load in-memory state for active novel from serverData or localStorage
-  const loadNovelData = (novelId: string, serverData?: LibraryStorageData | null) => {
-    // 1. Chapters
-    const loadedChapters = serverData?.chapters && serverData.chapters.length > 0
-      ? serverData.chapters.filter((c) => c.novel_id === novelId)
-      : getStoredChapters(novelId);
-    setChapters(loadedChapters);
-    if (loadedChapters.length > 0) {
-      setActiveChapterId((prev) => (loadedChapters.some((c) => c.id === prev) ? prev : loadedChapters[0].id));
-    } else {
-      setActiveChapterId(null);
-    }
-
-    // 2. References
-    const loadedRefs = serverData?.references && serverData.references.length > 0
-      ? serverData.references.filter((r) => r.novel_id === novelId)
-      : getStoredReferences(novelId);
-    setReferences(loadedRefs);
-
-    const styleRef = loadedRefs.find((r) => r.kategori === 'Gaya Bahasa');
-    setWritingStyle(styleRef?.deskripsi || '');
-
-    const synopsisRef = loadedRefs.find((r) => r.nama_item?.toLowerCase().includes('sinopsis'));
-    setSynopsis(synopsisRef?.deskripsi || 'Satu pahlawan bangkit menghadapi bencana surgawi.');
-
-    // 3. Glossaries
-    const loadedGloss = serverData?.glossaries && serverData.glossaries.length > 0
-      ? serverData.glossaries.filter((g) => g.novel_id === novelId)
-      : getStoredGlossaries(novelId);
-    setGlossaries(loadedGloss);
-  };
-
-  // Helper: Reload full library directly from server disk
-  const reloadLibraryFromDisk = async (preferredNovelId?: string) => {
-    try {
-      const serverData = await fetchServerStorage();
-      if (serverData && Array.isArray(serverData.novels) && serverData.novels.length > 0) {
-        setNovels(serverData.novels);
-        const targetId = preferredNovelId || activeNovelId || serverData.novels[0].id;
-        setActiveNovelId(targetId);
-        loadNovelData(targetId, serverData);
-        return true;
-      }
-    } catch (e) {
-      console.warn('Failed reloading storage from server disk:', e);
-    }
-    return false;
-  };
-
-  // 1. Initial Load of Novels & Auto-Reload on Mount & Window Focus
+  // Keep isDirty ref current for stable focus handler (Race condition fix — audit #8)
+  const isDirtyRef = useRef(chapterEditor.isDirty);
   useEffect(() => {
-    reloadLibraryFromDisk();
+    isDirtyRef.current = chapterEditor.isDirty;
+  }, [chapterEditor.isDirty]);
+
+  // 1. Initial Load of Novels & Window Focus Auto-Reload with isDirty protection
+  useEffect(() => {
+    reloadLibraryFromDisk().then((serverData) => {
+      if (serverData && serverData.novels.length > 0) {
+        const targetId = activeNovelId || serverData.novels[0].id;
+        chapterEditor.reloadFromServer(targetId, serverData);
+      }
+    });
 
     const handleFocus = () => {
-      reloadLibraryFromDisk();
+      if (isDirtyRef.current) {
+        // Jangan overwrite uncommitted edits; beri tahu user
+        showToast({
+          message: 'Ada perubahan belum disimpan di chapter. Muat ulang dari disk akan menimpa edit Anda.',
+          actions: [
+            {
+              label: 'Muat Ulang (Buang Edit)',
+              onClick: () => {
+                chapterEditor.markClean();
+                reloadLibraryFromDisk().then((serverData) => {
+                  if (serverData && activeNovelId) {
+                    chapterEditor.reloadFromServer(activeNovelId, serverData);
+                  }
+                });
+              },
+            },
+            {
+              label: 'Batal',
+              onClick: () => {},
+            },
+          ],
+        });
+        return;
+      }
+      reloadLibraryFromDisk().then((serverData) => {
+        if (serverData && activeNovelId) {
+          chapterEditor.reloadFromServer(activeNovelId, serverData);
+        }
+      });
     };
+
     window.addEventListener('focus', handleFocus);
     return () => window.removeEventListener('focus', handleFocus);
   }, []);
@@ -195,29 +206,8 @@ export default function App() {
   // 2. Load Chapters, References, Glossaries when Active Novel changes
   useEffect(() => {
     if (!activeNovelId) return;
-    loadNovelData(activeNovelId);
+    chapterEditor.reloadFromServer(activeNovelId);
   }, [activeNovelId]);
-
-  const activeNovel = novels.find((n) => n.id === activeNovelId) || null;
-  const activeChapter = chapters.find((c) => c.id === activeChapterId) || null;
-
-  // Reactive Context Injection Stats (calculates estimated live injection for active chapter)
-  const promptStats = useMemo(() => {
-    if (!activeChapter || !activeChapter.teks_asli.trim()) {
-      return {
-        glossaryCount: 0,
-        totalGlossaries: glossaries.length,
-        hasReference: false,
-      };
-    }
-    const relevantGlossaries = filterRelevantGlossaries(activeChapter.teks_asli, glossaries);
-    const relevantReferences = filterRelevantReferences(activeChapter.teks_asli, references);
-    return {
-      glossaryCount: relevantGlossaries.length,
-      totalGlossaries: glossaries.length,
-      hasReference: relevantReferences.length > 0,
-    };
-  }, [activeChapter?.teks_asli, glossaries, references]);
 
   // Auto-Save active novel to Local File System if folder handle is attached
   const syncToLocalFS = async () => {
@@ -249,16 +239,11 @@ export default function App() {
       const handle = await requestFolderPicker();
       if (handle) {
         setNovelDirHandle(activeNovel.id, handle);
-        const updatedNovels = novels.map((n) =>
-          n.id === activeNovel.id ? { ...n, folder_path: `[Lokal] ${handle.name}` } : n
-        );
-        setNovels(updatedNovels);
-        saveStoredNovels(updatedNovels);
+        library.updateNovel(activeNovel.id, { folder_path: `[Lokal] ${handle.name}` });
         await saveNovelToLocalFS(activeNovel, chapters, references, glossaries, synopsis, writingStyle, handle);
         showToast(`Folder penyimpanan fisik dihubungkan ke "${handle.name}".`);
       }
     } else {
-      // Fallback if browser doesn't support direct local directory write
       setIsExportModalOpen(true);
     }
   };
@@ -267,7 +252,6 @@ export default function App() {
   const handleReExportNovelToLocal = async () => {
     if (!activeNovel) return;
     try {
-      // 1. Try local FS API first
       const fsSuccess = await saveNovelToLocalFS(
         activeNovel,
         chapters,
@@ -277,7 +261,6 @@ export default function App() {
         writingStyle
       );
 
-      // 2. Also send to server endpoint /api/export-novel
       const res = await fetch('/api/export-novel', {
         method: 'POST',
         headers: authHeaders({ 'Content-Type': 'application/json' }),
@@ -303,6 +286,7 @@ export default function App() {
       showToast(`Terjadi kesalahan: ${message}`);
     }
   };
+
   // Handler: Import & Merge Existing Local Novel Folder
   const handleImportNovelFolder = async () => {
     const inputPath = prompt(
@@ -323,7 +307,6 @@ export default function App() {
         return;
       }
 
-      // Create new novel object or update existing if title matches
       const existingNovel = novels.find((n) => n.judul.toLowerCase() === data.novel_title.toLowerCase());
       const novelId = existingNovel ? existingNovel.id : `novel-${Date.now()}`;
 
@@ -337,14 +320,12 @@ export default function App() {
         updatedAt: new Date().toISOString(),
       };
 
-      // Save Novel
-      const updatedNovels = existingNovel
-        ? novels.map((n) => (n.id === novelId ? importedNovel : n))
-        : [importedNovel, ...novels];
-      setNovels(updatedNovels);
-      saveStoredNovels(updatedNovels);
+      if (existingNovel) {
+        library.updateNovel(novelId, importedNovel);
+      } else {
+        library.addNovel(importedNovel);
+      }
 
-      // Save Chapters
       const allChapters = getStoredChapters().filter((c) => c.novel_id !== novelId);
       const newChapters: Chapter[] = (data.chapters || []).map((c: any) => ({
         id: `chap-${novelId}-${c.nomor_chapter}-${Date.now()}`,
@@ -357,10 +338,8 @@ export default function App() {
         updatedAt: new Date().toISOString(),
       }));
 
-      const updatedAllChapters = [...allChapters, ...newChapters];
-      saveStoredChapters(updatedAllChapters);
+      saveStoredChapters([...allChapters, ...newChapters]);
 
-      // Save References & Glossaries
       if (Array.isArray(data.reference_items) && data.reference_items.length > 0) {
         const existingRefs = getStoredReferences(novelId);
         const newRefs: ReferenceItem[] = data.reference_items.map((r: any) => ({
@@ -387,13 +366,15 @@ export default function App() {
         saveStoredGlossaries([...existingGloss, ...newGloss]);
       }
 
-      setActiveNovelId(novelId);
+      library.setActiveNovelId(novelId);
+      chapterEditor.reloadFromServer(novelId);
       showToast(`Berhasil meng-impor/merge "${importedNovel.judul}" (${newChapters.length} bab ditemukan)!`);
     } catch (err: any) {
       console.error('Error importing novel folder:', err);
       showToast(`Gagal mengimpor: ${err.message || 'Kesalahan jaringan'}`);
     }
   };
+
   // Helper: Save chapter to local disk via server API (/api/save-chapter)
   const saveChapterToDiskServer = async (chap: Chapter) => {
     if (!activeNovel) return;
@@ -421,43 +402,18 @@ export default function App() {
     }
   };
 
-
-  // Handler: Select Novel
-  const handleSelectNovel = (id: string) => {
-    setActiveNovelId(id);
-  };
-
   // Handler: Select Chapter
   const handleSelectChapter = (id: string) => {
-    setActiveChapterId(id);
+    chapterEditor.setActiveChapterId(id);
     if (typeof window !== 'undefined' && window.innerWidth < 1024) {
       setIsLeftSidebarOpen(false);
     }
   };
+
   // Handler: Update Chapter Text (Original & Translation)
   const handleUpdateChapterText = (original: string, translated: string) => {
     if (!activeChapterId || !activeNovelId) return;
-
-    const allChapters = getStoredChapters();
-    let updatedChapter: Chapter | undefined;
-
-    const updatedAll = allChapters.map((c) => {
-      if (c.id === activeChapterId) {
-        updatedChapter = {
-          ...c,
-          teks_asli: original,
-          teks_terjemahan: translated,
-          updatedAt: new Date().toISOString(),
-        };
-        return updatedChapter;
-      }
-      return c;
-    });
-
-    saveStoredChapters(updatedAll);
-    const activeChapters = updatedAll.filter((c) => c.novel_id === activeNovelId);
-    setChapters(activeChapters);
-
+    const updatedChapter = chapterEditor.updateChapterText(activeChapterId, original, translated, activeNovelId);
     if (updatedChapter) {
       saveChapterToDiskServer(updatedChapter);
     }
@@ -466,22 +422,7 @@ export default function App() {
   // Handler: Update Chapter Status
   const handleUpdateChapterStatus = (status: ChapterStatus) => {
     if (!activeChapterId || !activeNovelId) return;
-
-    const allChapters = getStoredChapters();
-    const updatedAll = allChapters.map((c) => {
-      if (c.id === activeChapterId) {
-        return {
-          ...c,
-          status_pengerjaan: status,
-          updatedAt: new Date().toISOString(),
-        };
-      }
-      return c;
-    });
-
-    saveStoredChapters(updatedAll);
-    const activeChapters = updatedAll.filter((c) => c.novel_id === activeNovelId);
-    setChapters(activeChapters);
+    chapterEditor.updateChapterStatus(activeChapterId, status, activeNovelId);
     showToast(`Status Bab diperbarui menjadi "${status}".`);
   };
 
@@ -507,10 +448,7 @@ export default function App() {
       setNovelDirHandle(newNovel.id, data.dirHandle);
     }
 
-    const updatedNovels = [newNovel, ...novels];
-    setNovels(updatedNovels);
-    saveStoredNovels(updatedNovels);
-    setActiveNovelId(newNovel.id);
+    library.addNovel(newNovel);
     showToast(`Novel "${newNovel.judul}" berhasil dibuat.`);
   };
 
@@ -519,46 +457,20 @@ export default function App() {
     e.stopPropagation();
     if (!confirm('Apakah Anda yakin ingin menghapus novel ini beserta seluruh bab dan glosariumnya?')) return;
 
-    const updatedNovels = deleteStoredNovel(id);
-    setNovels(updatedNovels);
-    removeNovelDirHandle(id); // bersihkan handle folder — cegah memory leak (audit #14)
-
-    if (activeNovelId === id) {
-      if (updatedNovels.length > 0) {
-        setActiveNovelId(updatedNovels[0].id);
-      } else {
-        setActiveNovelId(null);
-      }
-    }
+    library.removeNovel(id);
+    removeNovelDirHandle(id);
     showToast('Novel dan foldernya di disk berhasil dihapus.');
   };
 
   // Handler: Rename Novel
   const handleRenameNovel = (id: string, newTitle: string) => {
-    const trimmed = newTitle.trim();
-    if (!trimmed) return;
-
-    const updatedNovels = renameStoredNovel(id, trimmed);
-    setNovels(updatedNovels);
+    library.renameNovel(id, newTitle);
     showToast('Judul novel dan folder di disk berhasil diperbarui.');
   };
 
   // Handler: Rename Chapter
   const handleRenameChapter = (id: string, newTitle: string) => {
-    const trimmed = newTitle.trim();
-    if (!trimmed || !activeNovelId) return;
-
-    const allChapters = getStoredChapters();
-    const updatedAll = allChapters.map((c) => {
-      if (c.id === id) {
-        return { ...c, judul_chapter: trimmed, updatedAt: new Date().toISOString() };
-      }
-      return c;
-    });
-
-    saveStoredChapters(updatedAll);
-    const activeChapters = updatedAll.filter((c) => c.novel_id === activeNovelId);
-    setChapters(activeChapters);
+    chapterEditor.renameChapter(id, newTitle, activeNovelId || undefined);
     showToast('Judul bab berhasil diperbarui.');
   };
 
@@ -569,25 +481,7 @@ export default function App() {
     teks_asli: string;
   }) => {
     if (!activeNovelId) return;
-
-    const newChapter: Chapter = {
-      id: `chap-${activeNovelId}-${Date.now()}`,
-      novel_id: activeNovelId,
-      nomor_chapter: data.nomor_chapter,
-      judul_chapter: data.judul_chapter,
-      teks_asli: data.teks_asli,
-      teks_terjemahan: '',
-      status_pengerjaan: 'Belum',
-      updatedAt: new Date().toISOString(),
-    };
-
-    const allChapters = getStoredChapters();
-    const updatedAllChapters = [...allChapters, newChapter];
-    saveStoredChapters(updatedAllChapters);
-
-    const activeChapters = updatedAllChapters.filter((c) => c.novel_id === activeNovelId);
-    setChapters(activeChapters);
-    setActiveChapterId(newChapter.id);
+    const newChapter = chapterEditor.createChapter(activeNovelId, data);
     showToast(`Bab ${newChapter.nomor_chapter} berhasil ditambahkan.`);
   };
 
@@ -596,7 +490,6 @@ export default function App() {
     if (!activeNovelId || !e.target.files || e.target.files.length === 0) return;
 
     const file = e.target.files[0];
-    // Batasi ukuran import file (audit #12) — maks 5MB
     if (file.size > 5 * 1024 * 1024) {
       showToast('File terlalu besar (maks 5MB).');
       if (e.target) e.target.value = '';
@@ -604,7 +497,6 @@ export default function App() {
     }
 
     const reader = new FileReader();
-
     reader.onload = (event) => {
       const content = event.target?.result as string;
       if (!content) return;
@@ -618,7 +510,6 @@ export default function App() {
         teks_asli: content,
       });
     };
-
     reader.readAsText(file);
   };
 
@@ -627,78 +518,45 @@ export default function App() {
     e.stopPropagation();
     if (!confirm('Hapus chapter ini?')) return;
 
-    const activeChapters = deleteStoredChapter(id, activeNovelId || undefined);
-    setChapters(activeChapters);
-
-    if (activeChapterId === id) {
-      if (activeChapters.length > 0) {
-        setActiveChapterId(activeChapters[0].id);
-      } else {
-        setActiveChapterId(null);
-      }
-    }
+    chapterEditor.deleteChapter(id, activeNovelId || undefined);
     showToast('Bab berhasil dihapus.');
   };
 
   // Handler: Add Glossary Item
   const handleAddGlossaryItem = (item: Omit<GlossaryItem, 'id' | 'novel_id'>) => {
     if (!activeNovelId) return;
-
-    const newItem: GlossaryItem = {
-      ...item,
-      id: `glos-${crypto.randomUUID()}`,
-      novel_id: activeNovelId,
-      gender: item.gender,
-    };
-    const allGloss = getStoredGlossaries(activeNovelId);
-    const updatedAll = [newItem, ...allGloss];
-    saveStoredGlossaries(updatedAll, activeNovelId);
-    setGlossaries(updatedAll);
+    const newItem = chapterEditor.addGlossaryItem(activeNovelId, item);
     showToast(`Istilah "${newItem.istilah_asli}" ditambahkan ke glosarium.`);
   };
 
   // Handler: Delete Glossary Item
   const handleDeleteGlossaryItem = (id: string) => {
     if (!activeNovelId) return;
-
-    const updated = deleteStoredGlossary(id, activeNovelId);
-    setGlossaries(updated);
+    chapterEditor.deleteGlossaryItem(id, activeNovelId);
     showToast('Istilah berhasil dihapus dari glosarium.');
   };
 
   // Handler: Update Glossary Gender Tag
   const handleUpdateGlossaryGender = (id: string, gender: GenderTag | undefined) => {
     if (!activeNovelId) return;
-
-    const updated = glossaries.map((g) => (g.id === id ? { ...g, gender } : g));
-    saveStoredGlossaries(updated, activeNovelId);
-    setGlossaries(updated);
+    const updated = chapterEditor.updateGlossaryGender(id, gender, activeNovelId);
     showToast(`Gender istilah "${updated.find((g) => g.id === id)?.istilah_asli}" diperbarui.`);
   };
+
   // Handler: Add Reference Item
   const handleAddReferenceItem = (item: Omit<ReferenceItem, 'id' | 'novel_id'>) => {
     if (!activeNovelId) return;
-
-    const newItem: ReferenceItem = {
-      ...item,
-      id: `ref-${Date.now()}`,
-      novel_id: activeNovelId,
-    };
-
-    const updated = [newItem, ...references];
-    saveStoredReferences(updated, activeNovelId);
-    setReferences(updated);
+    const newItem = chapterEditor.addReferenceItem(activeNovelId, item);
     showToast(`Lore/Karakter "${newItem.nama_item}" ditambahkan.`);
   };
 
   // Handler: Delete Reference Item
   const handleDeleteReferenceItem = (id: string) => {
     if (!activeNovelId) return;
-
-    const updated = deleteStoredReference(id, activeNovelId);
-    setReferences(updated);
+    chapterEditor.deleteReferenceItem(id, activeNovelId);
     showToast('Lore/Referensi berhasil dihapus.');
   };
+
   // Phase 1 & 2: Translate Chapter via LLM with Context Assembly
   const handleTranslateChapter = async () => {
     if (!activeNovel || !activeChapter || !activeChapter.teks_asli.trim()) return;
@@ -790,7 +648,6 @@ export default function App() {
         const newGlossaryItems: GlossaryItem[] = [...glossaries];
 
         result.terms.forEach((term) => {
-          // Check duplicate
           const exists = newGlossaryItems.some(
             (g) => g.istilah_asli.toLowerCase() === term.istilah_asli.toLowerCase()
           );
@@ -808,8 +665,8 @@ export default function App() {
             addedCount++;
           }
         });
-        saveStoredGlossaries(newGlossaryItems);
-        setGlossaries(newGlossaryItems);
+        saveStoredGlossaries(newGlossaryItems, activeNovelId || undefined);
+        chapterEditor.setGlossaries(newGlossaryItems);
         showToast(`Berhasil mengekstrak ${addedCount} istilah baru ke glosarium!`);
       } else {
         showToast('Tidak ada istilah baru tambahan ditemukan pada bab ini.');
@@ -832,13 +689,7 @@ export default function App() {
   // Update Source and Target Languages for Active Novel
   const handleUpdateNovelLanguages = (source: LanguageCode, target: LanguageCode) => {
     if (!activeNovel) return;
-    const updatedNovels = novels.map((n) =>
-      n.id === activeNovel.id
-        ? { ...n, bahasa_sumber: source, bahasa_target: target, updatedAt: new Date().toISOString() }
-        : n
-    );
-    setNovels(updatedNovels);
-    saveStoredNovels(updatedNovels);
+    library.updateNovel(activeNovel.id, { bahasa_sumber: source, bahasa_target: target });
     showToast(`Bahasa diperbarui: ${source} ➔ ${target}`);
   };
 
@@ -847,10 +698,26 @@ export default function App() {
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#111318] font-sans antialiased text-gray-200">
       {/* Toast Notification */}
-      {toastMessage && (
-        <div className="fixed bottom-4 right-4 z-50 bg-[#1F2229] border border-indigo-500/30 text-indigo-300 px-4 py-2.5 rounded shadow-2xl text-xs font-medium flex items-center gap-2 animate-in fade-in slide-in-from-bottom duration-200">
+      {toast && (
+        <div className="fixed bottom-4 right-4 z-50 bg-[#1F2229] border border-indigo-500/30 text-indigo-300 px-4 py-2.5 rounded shadow-2xl text-xs font-medium flex items-center gap-3 animate-in fade-in slide-in-from-bottom duration-200">
           <span className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse"></span>
-          <span>{toastMessage}</span>
+          <span>{toast.message}</span>
+          {toast.actions && toast.actions.length > 0 && (
+            <div className="flex items-center gap-2 ml-2">
+              {toast.actions.map((act, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => {
+                    act.onClick();
+                    setToast(null);
+                  }}
+                  className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-xs transition cursor-pointer font-medium"
+                >
+                  {act.label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -893,7 +760,7 @@ export default function App() {
             <NovelSidebar
               novels={novels}
               activeNovelId={activeNovelId}
-              onSelectNovel={handleSelectNovel}
+              onSelectNovel={library.setActiveNovelId}
               chapters={chapters}
               activeChapterId={activeChapterId}
               onSelectChapter={handleSelectChapter}
