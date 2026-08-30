@@ -15,17 +15,6 @@ interface NewNovelModalProps {
   }) => void;
 }
 
-const LANGUAGES: LanguageCode[] = [
-  'Mandarin',
-  'Inggris',
-  'Jepang',
-  'Korea',
-  'Indonesia',
-  'Spanyol',
-  'Jerman',
-  'Prancis',
-];
-
 export const NewNovelModal: React.FC<NewNovelModalProps> = ({
   isOpen,
   onClose,

@@ -22,7 +22,9 @@
     },
     "allowImportingTsExtensions": true,
     "noEmit": true,
-    "types": ["node"]
+    "types": ["node"],
+    "noImplicitAny": true,
+    "strictNullChecks": true
   },
   "exclude": ["node_modules", "dist", "test"]
 }

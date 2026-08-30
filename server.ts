@@ -536,7 +536,9 @@ function ensurePromptTemplateFile(): void {
     const def = getDefaultConfig();
     try {
       fs.writeFileSync(CONFIG_PATH, JSON.stringify(def, null, 2), 'utf-8');
-    } catch (e) {}
+    } catch (e) {
+      console.warn('[config] Failed to write default config:', e);
+    }
     return def;
   };
 
@@ -799,7 +801,9 @@ function ensurePromptTemplateFile(): void {
     if (fs.existsSync(refPath)) {
       try {
         refJson = JSON.parse(fs.readFileSync(refPath, 'utf-8'));
-      } catch (e) {}
+      } catch (e) {
+        console.warn('[loadNovel] Failed to parse reference.json:', folderPath, e);
+      }
     }
 
     const novel: StoredNovel = {
@@ -1376,14 +1380,18 @@ function ensurePromptTemplateFile(): void {
       if (fs.existsSync(refPath)) {
         try {
           referenceJson = JSON.parse(fs.readFileSync(refPath, 'utf-8'));
-        } catch (e) {}
+        } catch (e) {
+          console.warn('[import-folder] Failed to parse reference.json:', e);
+        }
       }
 
       const glosPath = path.join(metadataFolder, 'glossary.json');
       if (fs.existsSync(glosPath)) {
         try {
           glossaryJson = JSON.parse(fs.readFileSync(glosPath, 'utf-8'));
-        } catch (e) {}
+        } catch (e) {
+          console.warn('[import-folder] Failed to parse glossary.json:', e);
+        }
       }
 
       // Scan directory for Chapter_*.md files or .txt/.md files
@@ -1637,7 +1645,7 @@ Kembalikan respon DALAM FORMAT JSON SAJA dengan skema:
   ]
 }
 HANYA ekstrak istilah yang penting dan benar-benar berguna untuk konsistensi bab selanjutnya.`;
-      let parsed = { terms: [] };
+      let parsed: { terms: any[] } = { terms: [] };
 
       if (provider === 'openrouter') {
         const apiKey = apiKeyOverride;
