@@ -6,6 +6,7 @@ import dotenv from 'dotenv';
 import crypto from 'crypto';
 import { GoogleGenAI, Type } from '@google/genai';
 import { makeDataSection, PROMPT_INJECTION_GUARD, buildTranslateUserPrompt } from './src/services/promptBuilder';
+import { extractChapterNumber } from './src/services/chapterParser';
 
 // Load environment variables (.env.local has precedence over .env)
 if (fs.existsSync('.env.local')) {
@@ -718,8 +719,7 @@ function ensurePromptTemplateFile(): void {
             const chapFilePath = path.join(folderPath, file);
             const content = fs.readFileSync(chapFilePath, 'utf-8');
 
-            const matchNum = file.match(/(?:Chapter|chap|Bab|bab)[_\-\s]*(\d+)/i) || file.match(/(\d+)/);
-            const nomorChapter = matchNum ? parseInt(matchNum[1], 10) : chapters.length + 1;
+            const nomorChapter = extractChapterNumber(file) ?? (chapters.length + 1);
 
             let title = `Chapter ${nomorChapter}`;
             const titleMatch = content.match(/^#\s+(?:Chapter|Bab)\s+\d+[:\s\-]*(.+)$/m);
@@ -759,7 +759,7 @@ function ensurePromptTemplateFile(): void {
             }
 
             chapters.push({
-              id: `chap-${novelId}-${nomorChapter}`,
+              id: `chap-${novelId}-${nomorChapter}-${crypto.randomUUID().slice(0, 8)}`,
               novel_id: novelId,
               nomor_chapter: nomorChapter,
               judul_chapter: title,
@@ -1400,8 +1400,7 @@ function ensurePromptTemplateFile(): void {
           const content = fs.readFileSync(filePath, 'utf-8');
 
           // Try matching chapter number from filename (e.g. Chapter_01.md or 01.txt)
-          const numMatch = file.match(/(\d+)/);
-          const nomorChapter = numMatch ? parseInt(numMatch[1], 10) : chapters.length + 1;
+          const nomorChapter = extractChapterNumber(file) ?? (chapters.length + 1);
 
           // Parse title and markdown sections if formatted
           let title = file.replace(/\.[^/.]+$/, '');
