@@ -357,9 +357,8 @@ describe('Server-Backed Persistent Storage & Config Stability', () => {
 
     assert.ok(typesContent.includes('reference_data?:'), 'ExtractGlossaryRequest should have optional reference_data');
     assert.ok(appContent.includes('filterRelevantGlossaries(activeChapter.teks_asli, glossaries)'), 'App.tsx should filter relevant glossaries for extraction');
-    assert.ok(appContent.includes('filterRelevantReferences(activeChapter.teks_asli, references)'), 'App.tsx should filter relevant references for extraction');
     assert.ok(serverContent.includes('GLOSARIUM RELEVAN YANG SUDAH TERDAFTAR'), 'server.ts should inject relevant existing glossary');
-    assert.ok(serverContent.includes('PANDUAN REFERENSI & LORE NOVEL'), 'server.ts should inject reference lore if present');
+    assert.ok(serverContent.includes('GLOSARIUM_TERDAFTAR'), 'server.ts should wrap existing glossary in makeDataSection');
   });
   test('glossary items should support gender tags for character names to prevent pronoun errors in English translation', () => {
     const fs = require('fs');

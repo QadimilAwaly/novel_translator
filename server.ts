@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
 import { GoogleGenAI, Type } from '@google/genai';
+import { makeDataSection, PROMPT_INJECTION_GUARD, buildTranslateUserPrompt } from './src/services/promptBuilder';
 
 // Load environment variables (.env.local has precedence over .env)
 if (fs.existsSync('.env.local')) {
@@ -1497,10 +1498,8 @@ function ensurePromptTemplateFile(): void {
             return `- "${g.istilah_asli}" MUST BE TRANSLATED AS "${g.istilah_terjemahan}" [Kategori: ${g.kategori}${genderInfo}${g.konteks ? `, Konteks: ${g.konteks}` : ''}]`;
           }).join('\n')
         : 'Belum ada istilah terdaftar.';
-      // Format Reference & Lore for Injection
-      const refSynopsis = reference_data?.synopsis || 'Tidak ada sinopsis.';
+      // Format Reference for Injection (Sinopsis & lore dihapus total dari prompt translasi per owner decision)
       const refStyle = reference_data?.writing_style || 'Gaya penerjemahan novel fiksi standar.';
-      const refLore = reference_data?.lore_summary || 'Tidak ada catatan lore tambahan.';
       const systemInstructionTemplate = getTranslationSystemInstructionTemplate();
 
       const templateVariables: Record<string, string> = {
@@ -1508,24 +1507,18 @@ function ensurePromptTemplateFile(): void {
         BAHASA_TARGET: String(bahasa_target || 'Target'),
       };
 
-      const systemInstruction = renderPromptTemplate(systemInstructionTemplate, templateVariables);
+      const systemInstruction = renderPromptTemplate(systemInstructionTemplate, templateVariables) + PROMPT_INJECTION_GUARD;
 
-      // User context prompt is securely assembled in code to protect critical application data flow
-      const prompt = `[JUDUL NOVEL]
-${judul_novel || 'Novel'} - Chapter ${nomor_chapter || 1}
-
-[PANDUAN REFERENSI & TONE]
-- Sinopsis / Gambaran Cerita: ${refSynopsis}
-- Gaya Bahasa & Nada: ${refStyle}
-- Detail Lore & Karakter: ${refLore}
-
-[GLOSARIUM TERIKAT (PILIHAN ISTILAH MANDATORI)]
-${glossaryPrompt}
-
-[TEKS ASLI CHAPTER (${bahasa_sumber || 'Asli'})]
-${teks_asli}
-
-Terjemahkan teks di atas ke ${bahasa_target || 'Target'} sesuai aturan dan glosarium di atas:`;
+      // User context prompt is securely assembled using makeDataSection delimiters (Step 7)
+      const prompt = buildTranslateUserPrompt({
+        judul_novel,
+        nomor_chapter,
+        refStyle,
+        glossaryPrompt,
+        teks_asli,
+        bahasa_sumber,
+        bahasa_target,
+      });
       let translatedText = '';
 
       if (provider === 'openrouter') {
@@ -1601,21 +1594,18 @@ Terjemahkan teks di atas ke ${bahasa_target || 'Target'} sesuai aturan dan glosa
           }).filter(Boolean).join('\n')
         : 'Belum ada istilah terdaftar.';
 
-      const refSynopsis = reference_data?.synopsis || '';
-      const refLore = reference_data?.lore_summary || '';
+      const extractSystemInstruction = `Anda adalah asisten ekstraksi glosarium novel dari ${sourceLang} ke ${targetLang} yang mengembalikan JSON valid saja.` + PROMPT_INJECTION_GUARD;
 
       const prompt = `Analisis teks asli (${sourceLang}) dan teks terjemahan (${targetLang}) dari Chapter ${nomor_chapter} berikut:
 
-${refSynopsis || refLore ? `[PANDUAN REFERENSI & LORE NOVEL]
-${refSynopsis ? `- Sinopsis: ${refSynopsis}\n` : ''}${refLore ? `- Detail Lore & Karakter:\n${refLore}\n` : ''}` : ''}
 [GLOSARIUM RELEVAN YANG SUDAH TERDAFTAR (WAJIB DIIKUTI KONSISTENSINYA)]
-${formattedExistingGlossary}
+${makeDataSection('GLOSARIUM_TERDAFTAR', formattedExistingGlossary)}
 
 [TEKS ASLI (${sourceLang})]
-${teks_asli.slice(0, 5000)}
+${makeDataSection('TEKS_ASLI', teks_asli.slice(0, 5000))}
 
 [TEKS TERJEMAHAN (${targetLang})]
-${teks_terjemahan.slice(0, 5000)}
+${makeDataSection('TEKS_TERJEMAHAN', teks_terjemahan.slice(0, 5000))}
 
 Tugas Anda:
 Ekstrak semua istilah baru yang penting yang muncul dalam chapter ini dari bahasa sumber (${sourceLang}) ke bahasa target (${targetLang}), meliputi:
@@ -1658,7 +1648,7 @@ HANYA ekstrak istilah yang penting dan benar-benar berguna untuk konsistensi bab
         const jsonText = await callOpenRouterWithRetry({
           model,
           apiKey,
-          systemInstruction: `Anda adalah asisten ekstraksi glosarium novel dari ${sourceLang} ke ${targetLang} yang mengembalikan JSON valid saja.`,
+          systemInstruction: extractSystemInstruction,
           prompt,
           jsonOutput: true,
         });
@@ -1674,6 +1664,7 @@ HANYA ekstrak istilah yang penting dan benar-benar berguna untuk konsistensi bab
         const jsonText = await callGeminiWithRetryAndFallback({
           model,
           apiKeyOverride,
+          systemInstruction: extractSystemInstruction,
           prompt,
           responseMimeType: 'application/json',
           responseSchema: {
