@@ -12,3 +12,6 @@ config.json
 
 # Artefak sinkronisasi (Resilio/SyncThing) — bukan bagian proyek
 .sync/
+
+# Folder penyimpanan novel lokal (hasil generate app, bukan source)
+Novel_Library/
