@@ -1,406 +1,266 @@
 /**
- * Test Suite: Server-Side Vulnerabilities
- * =========================================
- * Menguji setiap vulnerability yang ditemukan pada audit 2026-08-14.
+ * Test Suite: Server-Side Security & Path Traversal Prevention
+ * ==============================================================
+ * Comprehensive tests verifying the removal of sandbox-bypassing fallbacks
+ * and validating that all filesystem operations are strictly confined within Novel_Library.
  *
- * Cara jalankan:
- *   bun test test/server-security.test.ts
- *
- * Catatan: Menggunakan bun:test (Bun-native test runner).
+ * Runs via: bun test test/server-security.test.ts
  */
 
-import { test, describe } from 'bun:test';
+import { test, describe, beforeAll, afterAll } from 'bun:test';
 import assert from 'assert';
 import path from 'path';
-import os from 'os';
 import fs from 'fs';
+import { spawn, ChildProcess } from 'child_process';
+
+const TEST_PORT = 3199;
+const TEST_HOST = '127.0.0.1';
+const BASE_URL = `http://${TEST_HOST}:${TEST_PORT}`;
+const CWD = process.cwd();
+const LIBRARY_BASE = path.join(CWD, 'Novel_Library');
 
 // ============================================================
-// HELPER
+// 1. UNIT TESTS: resolveSafePath Logic
 // ============================================================
-function createTempDir(prefix = 'audit_test_'): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-}
-
-function cleanupDir(dir: string) {
-  try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
-}
-
-function resolveTargetFolder(folderPath: string, cwd: string): string {
-  let targetFolder = folderPath;
-  if (!path.isAbsolute(targetFolder)) {
-    targetFolder = path.join(cwd, targetFolder);
-  }
-  return targetFolder;
-}
-
-function pathEscapesBase(targetPath: string, basePath: string): boolean {
-  const resolved = path.resolve(targetPath);
+function resolveSafePath(inputPath: string, basePath: string): string | null {
   const base = path.resolve(basePath);
-  const relative = path.relative(base, resolved);
-  return relative.startsWith('..');
+  let target = inputPath;
+  if (!path.isAbsolute(target)) {
+    target = path.join(base, target);
+  }
+  const resolved = path.resolve(target);
+  const rel = path.relative(base, resolved);
+  if (rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))) {
+    return resolved;
+  }
+  return null;
 }
 
-// ============================================================
-// TEST 1: Path Traversal — ../ sequences
-// ============================================================
-describe('Path Traversal — ../ sequence', () => {
-  let tempDir: string;
+describe('Unit: resolveSafePath Sandboxing', () => {
+  test('should return absolute path when target is inside libraryBase', () => {
+    const validRelative = 'MyNovel';
+    const resolved = resolveSafePath(validRelative, LIBRARY_BASE);
+    assert.equal(resolved, path.join(LIBRARY_BASE, 'MyNovel'));
 
-  test('should detect that ../ escapes the allowed base directory', () => {
-    tempDir = createTempDir();
-    const maliciousPath = path.join(tempDir, '..', '..', '..', 'tmp', 'evil_test');
-    const escapes = pathEscapesBase(maliciousPath, tempDir);
-
-    console.log(`  Malicious path: ${maliciousPath}`);
-    console.log(`  Base directory: ${tempDir}`);
-    console.log(`  Escapes base: ${escapes}`);
-
-    assert.equal(escapes, true, 'Path with ../ should escape the base directory');
-    console.log('  ⚠️  VULNERABILITY CONFIRMED: No path validation in server.ts allows traversal');
-
-    cleanupDir(tempDir);
+    const validAbsolute = path.join(LIBRARY_BASE, 'MyNovel', 'metadata');
+    const resolvedAbs = resolveSafePath(validAbsolute, LIBRARY_BASE);
+    assert.equal(resolvedAbs, validAbsolute);
   });
 
-  test('should detect that absolute paths bypass the cwd-join logic', () => {
-    tempDir = createTempDir();
-    const cwd = process.cwd();
-    const absolutePath = '/tmp/evil_novel_abs';
-    const resolved = resolveTargetFolder(absolutePath, cwd);
-    const escapes = pathEscapesBase(resolved, cwd);
+  test('should reject relative path traversal (../) escaping libraryBase', () => {
+    const traversal1 = '../../../../etc/passwd';
+    assert.equal(resolveSafePath(traversal1, LIBRARY_BASE), null);
 
-    console.log(`  Absolute path input: ${absolutePath}`);
-    console.log(`  Resolved: ${resolved}`);
-    console.log(`  Escapes cwd: ${escapes}`);
-
-    assert.equal(escapes, true, 'Absolute path outside cwd should be detected as escape');
-    console.log('  ⚠️  VULNERABILITY CONFIRMED: Absolute paths bypass cwd-join and can write anywhere');
-
-    cleanupDir(tempDir);
+    const traversal2 = '../other_dir';
+    assert.equal(resolveSafePath(traversal2, LIBRARY_BASE), null);
   });
 
-  test('should flag null bytes in path as potential bypass attempt', () => {
-    tempDir = createTempDir();
-    const nullBytePath = tempDir + '\0evil';
-    const hasNullByte = nullBytePath.includes('\0');
+  test('should reject absolute paths outside libraryBase', () => {
+    const outsidePath1 = '/data/data/com.termux/files/home';
+    assert.equal(resolveSafePath(outsidePath1, LIBRARY_BASE), null);
 
-    console.log(`  Null byte path detected: ${hasNullByte}`);
-    assert.equal(hasNullByte, true, 'Null byte in path should be detected');
-    console.log('  ⚠️  VULNERABILITY: No null byte sanitization in server.ts');
+    const outsidePath2 = '/tmp/evil_novel';
+    assert.equal(resolveSafePath(outsidePath2, LIBRARY_BASE), null);
 
-    cleanupDir(tempDir);
+    const outsidePath3 = '/etc/shadow';
+    assert.equal(resolveSafePath(outsidePath3, LIBRARY_BASE), null);
   });
 
-  test('should detect Windows-style path traversal with ..\\', () => {
-    tempDir = createTempDir();
-    const windowsStyle = path.join(tempDir, '..\\..\\..\\tmp\\evil_test_win');
-    const normalized = path.normalize(windowsStyle);
-    const escapes = pathEscapesBase(normalized, tempDir);
-
-    console.log(`  Windows-style path: ${windowsStyle}`);
-    console.log(`  Normalized: ${normalized}`);
-    console.log(`  Escapes base: ${escapes}`);
-    console.log('  ⚠️  NOTE: Windows-style ..\\ traversal is platform-dependent but should be sanitized');
-
-    cleanupDir(tempDir);
+  test('should reject Windows-style path traversal', () => {
+    const winTraversal = '..\\..\\..\\tmp\\evil';
+    assert.equal(resolveSafePath(winTraversal, LIBRARY_BASE), null);
   });
 });
 
 // ============================================================
-// TEST 2: Filename Injection — Dangerous Characters
+// 2. STATIC INVARIANT TESTS: Confirmation of 4 Removed Fallbacks
 // ============================================================
-describe('Filename Injection — Dangerous Characters', () => {
-  test('should flag chapter titles with path separator characters', () => {
-    const dangerousTitles = [
-      '../../etc/passwd',
-      '../../../windows/system32/config',
-      'normal/../../../etc/shadow',
-    ];
+describe('Static Invariants: Removal of Sandbox-Bypassing Fallbacks', () => {
+  const serverContent = fs.readFileSync(path.join(CWD, 'server.ts'), 'utf-8');
 
-    for (const title of dangerousTitles) {
-      const fileName = 'Chapter_01.md';
-      const fullPath = path.join('/tmp/evil_dir', title, fileName);
-      const normalized = path.normalize(fullPath);
-      const escapes = pathEscapesBase(normalized, '/tmp/evil_dir');
+  test('Site A: /api/save-chapter must not contain fs.existsSync fallback', () => {
+    const saveChapterMatch = serverContent.match(/app\.post\('\/api\/save-chapter'[\s\S]*?app\.post\('/);
+    const code = saveChapterMatch ? saveChapterMatch[0] : '';
+    assert.ok(code.length > 0, 'Found /api/save-chapter route');
+    assert.ok(
+      !code.includes('targetFolder = path.resolve(folder_path)'),
+      'Site A must not fall back to path.resolve(folder_path)'
+    );
+    assert.ok(code.includes('resolveSafePath(folder_path, libraryBase)'), 'Site A uses resolveSafePath');
+  });
 
-      console.log(`  Title: "${title}" -> normalized path: ${normalized}`);
-      console.log(`  Escapes base: ${escapes}`);
+  test('Site B: /api/export-novel must not contain fs.existsSync fallback', () => {
+    const exportMatch = serverContent.match(/app\.post\('\/api\/export-novel'[\s\S]*?app\.post\('/);
+    const code = exportMatch ? exportMatch[0] : '';
+    assert.ok(code.length > 0, 'Found /api/export-novel route');
+    assert.ok(
+      !code.includes('targetFolder = path.resolve(novel.folder_path)'),
+      'Site B must not fall back to path.resolve(novel.folder_path)'
+    );
+    assert.ok(code.includes('resolveSafePath(novel.folder_path, libraryBase)'), 'Site B uses resolveSafePath');
+  });
 
-      if (escapes) {
-        console.log(`  ⚠️  VULNERABILITY: Path traversal via chapter title "${title}"`);
+  test('Site C: /api/import-novel-folder must strictly reject paths outside libraryBase with 400', () => {
+    const importMatch = serverContent.match(/app\.post\('\/api\/import-novel-folder'[\s\S]*?app\.post\('/);
+    const code = importMatch ? importMatch[0] : '';
+    assert.ok(code.length > 0, 'Found /api/import-novel-folder route');
+    assert.ok(
+      !code.includes('targetFolder = path.resolve(folder_path)'),
+      'Site C must not fall back to path.resolve(folder_path)'
+    );
+    assert.ok(code.includes('res.status(400)'), 'Site C returns 400 when path is invalid or outside library');
+  });
+
+  test('Site D: saveLibraryStorage delete must use resolveSafePath on folder_path', () => {
+    const deleteMatch = serverContent.match(/for\s*\(\s*const delNovel of deletedNovels\s*\)[\s\S]*?data\.chapters/);
+    const code = deleteMatch ? deleteMatch[0] : '';
+    assert.ok(code.length > 0, 'Found deletedNovels loop in saveLibraryStorage');
+    assert.ok(
+      !code.includes('delNovel.folder_path ? path.resolve(delNovel.folder_path) :'),
+      'Site D must not use unsandboxed path.resolve on delNovel.folder_path'
+    );
+    assert.ok(
+      code.includes('resolveSafePath(delNovel.folder_path, libraryBase)'),
+      'Site D must route folderByPath through resolveSafePath'
+    );
+  });
+});
+
+// ============================================================
+// 3. HTTP INTEGRATION TESTS: Live API Traversal Resistance
+// ============================================================
+describe('HTTP Integration: Real Endpoint Security & Regression Tests', () => {
+  let serverProcess: ChildProcess | null = null;
+
+  beforeAll(async () => {
+    // Start live server instance on test port (production mode skips Vite dev watcher for instant startup)
+    serverProcess = spawn('bun', ['server.ts'], {
+      cwd: CWD,
+      env: {
+        ...process.env,
+        PORT: String(TEST_PORT),
+        HOST: TEST_HOST,
+        NODE_ENV: 'production',
+      },
+      stdio: 'pipe',
+    });
+
+    // Wait for server to become responsive
+    const maxWait = 15000;
+    const start = Date.now();
+    let ready = false;
+
+    while (Date.now() - start < maxWait) {
+      try {
+        const res = await fetch(`${BASE_URL}/api/health`);
+        if (res.ok) {
+          ready = true;
+          break;
+        }
+      } catch {
+        await new Promise((r) => setTimeout(r, 150));
       }
     }
+
+    if (!ready) {
+      throw new Error('Test server failed to start on port ' + TEST_PORT);
+    }
+  }, 20000);
+
+  afterAll(() => {
+    if (serverProcess) {
+      serverProcess.kill('SIGTERM');
+    }
+    // Clean up any test folders created during integration test
+    const testNovelFolder = path.join(LIBRARY_BASE, 'TestIntegrationNovel');
+    if (fs.existsSync(testNovelFolder)) {
+      try { fs.rmSync(testNovelFolder, { recursive: true, force: true }); } catch {}
+    }
   });
 
-  test('should flag filenames with OS-reserved characters (Windows)', () => {
-    const reservedChars = /[<>:"|?*]/;
-    const dangerousTitles = [
-      'Chapter: Test <script>',
-      'Evil "File" | rm -rf /',
-      'Test?File*Name',
-    ];
+  test('POST /api/import-novel-folder: Should return 400 on traversal path (../../../../etc/passwd)', async () => {
+    const res = await fetch(`${BASE_URL}/api/import-novel-folder`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folder_path: '../../../../etc/passwd' }),
+    });
+    assert.equal(res.status, 400);
+    const data = (await res.json()) as { error?: string };
+    assert.ok(data.error?.includes('di luar direktori penyimpanan'));
+  });
 
-    for (const title of dangerousTitles) {
-      const hasReserved = reservedChars.test(title);
-      console.log(`  Title: "${title}" -> has reserved chars: ${hasReserved}`);
-      if (hasReserved) {
-        console.log(`  ⚠️  VULNERABILITY: Filename "${title}" contains OS-reserved characters`);
-      }
-    }
+  test('POST /api/import-novel-folder: Should return 400 on absolute path outside libraryBase', async () => {
+    const res = await fetch(`${BASE_URL}/api/import-novel-folder`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folder_path: '/data/data/com.termux/files/home' }),
+    });
+    assert.equal(res.status, 400);
+    const data = (await res.json()) as { error?: string };
+    assert.ok(data.error?.includes('di luar direktori penyimpanan'));
+  });
+
+  test('POST /api/save-chapter: Traversal folder_path should be ignored and safely default to libraryBase', async () => {
+    const res = await fetch(`${BASE_URL}/api/save-chapter`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        folder_path: '../../../../tmp/evil_test_dir',
+        chapter_number: 1,
+        chapter_title: 'Bab Test Keamanan',
+        novel_title: 'TestIntegrationNovel',
+        original_text: 'Teks Asli',
+        translated_text: 'Teks Terjemahan',
+      }),
+    });
+    assert.equal(res.status, 200);
+    const data = (await res.json()) as { status: string; path: string };
+    assert.equal(data.status, 'success');
+    // Path MUST be inside Novel_Library, NOT in /tmp
+    assert.ok(data.path.startsWith(LIBRARY_BASE), `Path ${data.path} must start with ${LIBRARY_BASE}`);
+    assert.ok(!data.path.includes('evil_test_dir'), 'Must not write to evil_test_dir');
+  });
+
+  test('POST /api/export-novel: Traversal novel.folder_path should be safely confined to libraryBase', async () => {
+    const res = await fetch(`${BASE_URL}/api/export-novel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        novel: {
+          id: 'test-novel-export',
+          judul: 'TestIntegrationNovel',
+          folder_path: '/tmp/evil_export_dir',
+          bahasa_sumber: 'Mandarin',
+          bahasa_target: 'Indonesia',
+        },
+        chapters: [{ nomor_chapter: 1, judul_chapter: 'Bab 1', teks_asli: 'Asli', teks_terjemahan: 'Hasil', status_pengerjaan: 'Selesai' }],
+      }),
+    });
+    assert.equal(res.status, 200);
+    const data = (await res.json()) as { status: string; path: string };
+    assert.equal(data.status, 'success');
+    assert.ok(data.path.startsWith(LIBRARY_BASE), `Export path ${data.path} must start with ${LIBRARY_BASE}`);
+    assert.ok(!data.path.includes('evil_export_dir'), 'Must not write to evil_export_dir');
+  });
+
+  test('POST /api/export-novel: Legitimate in-library path succeeds and creates files (Regression Guard)', async () => {
+    const legitFolder = path.join(LIBRARY_BASE, 'TestIntegrationNovel');
+    const res = await fetch(`${BASE_URL}/api/export-novel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        novel: {
+          id: 'test-novel-legit',
+          judul: 'TestIntegrationNovel',
+          folder_path: legitFolder,
+          bahasa_sumber: 'Mandarin',
+          bahasa_target: 'Indonesia',
+        },
+        chapters: [{ nomor_chapter: 1, judul_chapter: 'Bab 1', teks_asli: 'Asli', teks_terjemahan: 'Hasil', status_pengerjaan: 'Selesai' }],
+      }),
+    });
+    assert.equal(res.status, 200);
+    assert.ok(fs.existsSync(path.join(legitFolder, 'Chapter_01.md')));
+    assert.ok(fs.existsSync(path.join(legitFolder, 'metadata', 'reference.json')));
   });
 });
-
-// ============================================================
-// TEST 3: API Key Exposure via GET /api/config
-// ============================================================
-describe('API Key Exposure — GET /api/config', () => {
-  test('should confirm config.json contains API keys in plaintext', () => {
-    const configPath = path.join(process.cwd(), 'config.json');
-    const configExists = fs.existsSync(configPath);
-
-    console.log(`  config.json exists: ${configExists}`);
-
-    if (configExists) {
-      const raw = fs.readFileSync(configPath, 'utf-8');
-      const config = JSON.parse(raw);
-
-      const hasGeminiKey = config.gemini_api_key && config.gemini_api_key.length > 0;
-      const hasOpenRouterKey = config.openrouter_api_key && config.openrouter_api_key.length > 0;
-
-      console.log(`  Has Gemini API key: ${hasGeminiKey}`);
-      console.log(`  Has OpenRouter API key: ${hasOpenRouterKey}`);
-
-      if (hasGeminiKey || hasOpenRouterKey) {
-        console.log('  ⚠️  VULNERABILITY CONFIRMED: API keys stored in plaintext in config.json');
-      }
-    }
-  });
-
-  test('should confirm server.ts sends full config (including keys) to client', () => {
-    const serverPath = path.join(process.cwd(), 'server.ts');
-    const serverContent = fs.readFileSync(serverPath, 'utf-8');
-
-    const sendsFullConfig = serverContent.includes('res.json(readConfig())');
-    console.log(`  GET /api/config returns full config object: ${sendsFullConfig}`);
-
-    if (sendsFullConfig) {
-      console.log('  ⚠️  VULNERABILITY CONFIRMED: GET /api/config sends gemini_api_key and openrouter_api_key to client');
-    }
-  });
-
-  test('should confirm client stores API keys in localStorage', () => {
-    const appPath = path.join(process.cwd(), 'src', 'App.tsx');
-    const appContent = fs.readFileSync(appPath, 'utf-8');
-
-    const storesInLocalStorage = appContent.includes('localStorage.setItem') &&
-      appContent.includes('openrouterApiKey') &&
-      appContent.includes('geminiApiKey');
-
-    console.log(`  Client stores API keys in localStorage: ${storesInLocalStorage}`);
-
-    if (storesInLocalStorage) {
-      console.log('  ⚠️  VULNERABILITY CONFIRMED: API keys persisted in browser localStorage (accessible via XSS)');
-    }
-  });
-});
-
-// ============================================================
-// TEST 4: Server Binding — 0.0.0.0
-// ============================================================
-describe('Server Binding — 0.0.0.0', () => {
-  test('should confirm server binds to all interfaces', () => {
-    const serverPath = path.join(process.cwd(), 'server.ts');
-    const serverContent = fs.readFileSync(serverPath, 'utf-8');
-
-    const bindsToAllInterfaces = serverContent.includes("'0.0.0.0'") ||
-      serverContent.includes('"0.0.0.0"');
-
-    console.log(`  Server binds to 0.0.0.0: ${bindsToAllInterfaces}`);
-
-    if (bindsToAllInterfaces) {
-      console.log('  ⚠️  VULNERABILITY CONFIRMED: Server exposed on all network interfaces (not just localhost)');
-    }
-  });
-});
-
-// ============================================================
-// TEST 5: No Authentication on API Endpoints
-// ============================================================
-describe('No Authentication — API Endpoints', () => {
-  test('should confirm no auth middleware on any API route', () => {
-    const serverPath = path.join(process.cwd(), 'server.ts');
-    const serverContent = fs.readFileSync(serverPath, 'utf-8');
-
-    const hasAuthMiddleware = serverContent.includes('auth') ||
-      serverContent.includes('authenticate') ||
-      serverContent.includes('middleware') ||
-      serverContent.includes('rate-limit') ||
-      serverContent.includes('rateLimit');
-
-    console.log(`  Has auth middleware or rate limiting: ${hasAuthMiddleware}`);
-
-    if (!hasAuthMiddleware) {
-      console.log('  ⚠️  VULNERABILITY CONFIRMED: No authentication or authorization on any API endpoint');
-    }
-  });
-
-  test('should list all unprotected API endpoints', () => {
-    const serverPath = path.join(process.cwd(), 'server.ts');
-    const serverContent = fs.readFileSync(serverPath, 'utf-8');
-
-    const endpoints = [
-      'GET /api/health',
-      'GET /api/config',
-      'POST /api/config',
-      'POST /api/save-chapter',
-      'POST /api/export-novel',
-      'POST /api/translate',
-      'POST /api/extract-glossary',
-    ];
-
-    console.log('  Unprotected endpoints:');
-    for (const ep of endpoints) {
-      const routePath = ep.split(' ')[1];
-      const exists = serverContent.includes(routePath);
-      console.log(`    ${ep} — ${exists ? '⚠️  VULNERABLE' : '✅ Not found'}`);
-    }
-  });
-});
-
-// ============================================================
-// TEST 6: No Rate Limiting
-// ============================================================
-describe('No Rate Limiting', () => {
-  test('should confirm no rate-limit middleware is configured', () => {
-    const serverPath = path.join(process.cwd(), 'server.ts');
-    const serverContent = fs.readFileSync(serverPath, 'utf-8');
-
-    const hasRateLimit = serverContent.includes('rate-limit') ||
-      serverContent.includes('rateLimit') ||
-      serverContent.includes('express-rate-limit') ||
-      serverContent.includes('limiter');
-
-    console.log(`  Has rate limiting: ${hasRateLimit}`);
-
-    if (!hasRateLimit) {
-      console.log('  ⚠️  VULNERABILITY CONFIRMED: No rate limiting on API endpoints');
-    }
-  });
-});
-
-// ============================================================
-// TEST 7: No Timeout on AI API Calls
-// ============================================================
-describe('No Timeout on AI API Calls', () => {
-  test('should confirm fetch() to OpenRouter has no timeout', () => {
-    const serverPath = path.join(process.cwd(), 'server.ts');
-    const serverContent = fs.readFileSync(serverPath, 'utf-8');
-
-    const fetchCall = serverContent.includes("await fetch('https://openrouter.ai/api/v1/chat/completions'");
-    const hasTimeout = serverContent.includes('signal') ||
-      serverContent.includes('AbortController') ||
-      serverContent.includes('timeout');
-
-    console.log(`  OpenRouter fetch call exists: ${fetchCall}`);
-    console.log(`  Has timeout/AbortController: ${hasTimeout}`);
-
-    if (fetchCall && !hasTimeout) {
-      console.log('  ⚠️  VULNERABILITY CONFIRMED: OpenRouter API call has no timeout — can hang indefinitely');
-    }
-  });
-
-  test('should confirm Gemini API call has no timeout', () => {
-    const serverPath = path.join(process.cwd(), 'server.ts');
-    const serverContent = fs.readFileSync(serverPath, 'utf-8');
-
-    const hasTimeout = serverContent.includes('signal') ||
-      serverContent.includes('AbortController') ||
-      serverContent.includes('timeout');
-
-    console.log(`  Has timeout on Gemini calls: ${hasTimeout}`);
-
-    if (!hasTimeout) {
-      console.log('  ⚠️  VULNERABILITY CONFIRMED: Gemini API calls have no timeout');
-    }
-  });
-});
-
-// ============================================================
-// TEST 8: No CSP / Security Headers
-// ============================================================
-describe('Missing Security Headers', () => {
-  test('should confirm no helmet middleware or CSP headers', () => {
-    const serverPath = path.join(process.cwd(), 'server.ts');
-    const serverContent = fs.readFileSync(serverPath, 'utf-8');
-
-    const hasHelmet = serverContent.includes('helmet');
-    const hasCSP = serverContent.includes('Content-Security-Policy');
-    const hasXContentType = serverContent.includes('X-Content-Type-Options');
-    const hasXFrame = serverContent.includes('X-Frame-Options');
-
-    console.log(`  Has helmet: ${hasHelmet}`);
-    console.log(`  Has CSP header: ${hasCSP}`);
-    console.log(`  Has X-Content-Type-Options: ${hasXContentType}`);
-    console.log(`  Has X-Frame-Options: ${hasXFrame}`);
-
-    if (!hasHelmet && !hasCSP && !hasXContentType && !hasXFrame) {
-      console.log('  ⚠️  VULNERABILITY CONFIRMED: No security headers configured');
-    }
-  });
-
-  test('should confirm X-Powered-By header is exposed', () => {
-    const serverPath = path.join(process.cwd(), 'server.ts');
-    const serverContent = fs.readFileSync(serverPath, 'utf-8');
-
-    const disablesPoweredBy = serverContent.includes("disable('x-powered-by')") ||
-      serverContent.includes('disable("x-powered-by")');
-
-    console.log(`  Disables X-Powered-By: ${disablesPoweredBy}`);
-
-    if (!disablesPoweredBy) {
-      console.log('  ⚠️  VULNERABILITY CONFIRMED: X-Powered-By: Express header is exposed');
-    }
-  });
-});
-
-// ============================================================
-// TEST 9: No Input Sanitization for File Writing
-// ============================================================
-describe('No Input Sanitization for File Writing', () => {
-  test('should confirm chapter titles are not sanitized before writing to disk', () => {
-    const serverPath = path.join(process.cwd(), 'server.ts');
-    const serverContent = fs.readFileSync(serverPath, 'utf-8');
-
-    const hasSanitization = serverContent.includes('sanitize') ||
-      serverContent.includes('escape') ||
-      (serverContent.includes('replace(/[^') && serverContent.includes('chapter_title'));
-
-    console.log(`  Has input sanitization for file writing: ${hasSanitization}`);
-
-    if (!hasSanitization) {
-      console.log('  ⚠️  VULNERABILITY CONFIRMED: No sanitization of user input before writing to filesystem');
-    }
-  });
-});
-
-// ============================================================
-// TEST 10: No Validation on Chapter Number Type
-// ============================================================
-describe('No Validation on Chapter Number Type', () => {
-  test('should confirm chapter_number is not validated as integer', () => {
-    const serverPath = path.join(process.cwd(), 'server.ts');
-    const serverContent = fs.readFileSync(serverPath, 'utf-8');
-
-    const hasIntValidation = serverContent.includes('parseInt') ||
-      (serverContent.includes('Number(') && serverContent.includes('chapter_number')) ||
-      serverContent.includes('isNaN');
-
-    console.log(`  Has integer validation for chapter_number: ${hasIntValidation}`);
-
-    if (!hasIntValidation) {
-      console.log('  ⚠️  VULNERABILITY: chapter_number is not validated — string or float could be passed');
-    }
-  });
-});
-
-console.log('\n=== Server Security Tests Complete ===\n');

@@ -450,12 +450,10 @@ function ensurePromptTemplateFile(): void {
 
   // Helper: Resolve existing novel directory on disk to prevent duplicates
   const resolveNovelFolderOnDisk = (libraryBase: string, novel: { id: string; judul: string; folder_path?: string }): string => {
-    // 1. If novel.folder_path points to an existing directory, use it
+    // 1. If novel.folder_path points to an existing directory inside libraryBase, use it
     if (novel.folder_path) {
-      const directPath = path.isAbsolute(novel.folder_path)
-        ? path.resolve(novel.folder_path)
-        : path.resolve(libraryBase, novel.folder_path.replace(/^\//, ''));
-      if (fs.existsSync(directPath)) {
+      const directPath = resolveSafePath(novel.folder_path, libraryBase);
+      if (directPath && fs.existsSync(directPath)) {
         return directPath;
       }
     }
@@ -831,7 +829,7 @@ function ensurePromptTemplateFile(): void {
       for (const delNovel of deletedNovels) {
         const cleanTitle = sanitizeFilename(delNovel.judul || 'Novel_' + delNovel.id);
         const folderByName = path.join(libraryBase, cleanTitle);
-        const folderByPath = delNovel.folder_path ? path.resolve(delNovel.folder_path) : '';
+        const folderByPath = delNovel.folder_path ? resolveSafePath(delNovel.folder_path, libraryBase) : null;
 
         if (folderByPath && fs.existsSync(folderByPath)) {
           try {
@@ -1136,8 +1134,6 @@ function ensurePromptTemplateFile(): void {
         const safe = resolveSafePath(folder_path, libraryBase);
         if (safe) {
           targetFolder = safe;
-        } else if (fs.existsSync(folder_path) && !folder_path.includes('\0')) {
-          targetFolder = path.resolve(folder_path);
         }
       }
 
@@ -1173,8 +1169,6 @@ function ensurePromptTemplateFile(): void {
         const safe = resolveSafePath(novel.folder_path, libraryBase);
         if (safe) {
           targetFolder = safe;
-        } else if (fs.existsSync(novel.folder_path) && !novel.folder_path.includes('\0')) {
-          targetFolder = path.resolve(novel.folder_path);
         }
       }
 
@@ -1233,12 +1227,12 @@ function ensurePromptTemplateFile(): void {
       }
 
       const libraryBase = getLibraryStorageDir();
-      let targetFolder = resolveSafePath(folder_path, libraryBase);
-      if (!targetFolder && fs.existsSync(folder_path) && !folder_path.includes('\0')) {
-        targetFolder = path.resolve(folder_path);
+      const targetFolder = resolveSafePath(folder_path, libraryBase);
+      if (!targetFolder) {
+        return res.status(400).json({ error: 'Folder berada di luar direktori penyimpanan yang diizinkan (Novel_Library).' });
       }
 
-      if (!targetFolder || !fs.existsSync(targetFolder)) {
+      if (!fs.existsSync(targetFolder)) {
         return res.status(404).json({ error: `Folder "${folder_path}" tidak ditemukan.` });
       }
       // Read metadata/reference.json & metadata/glossary.json if exists
