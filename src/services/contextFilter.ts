@@ -4,7 +4,7 @@ import { GlossaryItem, ReferenceItem } from '../types';
  * Normalizes text for matching across CJK (Chinese/Japanese/Korean) and Latin scripts.
  * Strips punctuation and converts Latin to lower case.
  */
-function cleanSearchKeyword(term: string): string {
+export function cleanSearchKeyword(term: string): string {
   return term
     .toLowerCase()
     .replace(/[^\w\u4e00-\u9fa5\u3040-\u30ff\uac00-\ud7af]/g, '')
@@ -12,10 +12,10 @@ function cleanSearchKeyword(term: string): string {
 }
 
 /**
- * Extracts sub-terms from a glossary term string like "Spatial Ring / 储物戒" or "Lin Feng".
- * Returns an array of clean sub-keywords.
+ * Extracts sub-terms from a glossary term string.
+ * Retained for backwards compatibility.
  */
-function getKeywordsFromTerm(termStr: string): string[] {
+export function getKeywordsFromTerm(termStr: string): string[] {
   const parts = termStr.split(/[\/\(\)\|\,\;\:\-]/);
   const keywords: string[] = [];
 
@@ -35,6 +35,79 @@ function getKeywordsFromTerm(termStr: string): string[] {
   return keywords;
 }
 
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+const PURE_CJK_REGEX = /^[\u4e00-\u9fa5\u3040-\u30ff\uac00-\ud7af]+$/;
+
+/**
+ * Returns candidate sub-keywords for matching a glossary/reference term against chapter text.
+ * 1. Original term (trimmed) as the FIRST entry (whole-term match is preferred).
+ * 2. For terms containing a language alternation separator (/ ( |), additionally returns each side trimmed.
+ * 3. Does NOT split on space for Latin portions (prevents noisy sub-words from over-matching).
+ */
+export function getKeywordsForMatching(termStr: string): string[] {
+  if (!termStr || !termStr.trim()) return [];
+
+  const candidates: string[] = [];
+  const rawTrimmed = termStr.trim();
+  if (rawTrimmed.length > 0) {
+    candidates.push(rawTrimmed);
+  }
+
+  // Check for language alternation separators
+  if (/[\/\(\|]/.test(termStr)) {
+    const parts = termStr.split(/[\/\(\|]/);
+    for (const part of parts) {
+      const cleanedPart = part.replace(/\)/g, '').trim();
+      if (cleanedPart.length > 0 && !candidates.includes(cleanedPart)) {
+        candidates.push(cleanedPart);
+      }
+    }
+  }
+
+  return candidates;
+}
+
+/**
+ * Checks if a candidate keyword/term matches within lowerText.
+ * - For pure CJK candidates: uses substring includes without word boundary.
+ * - For Latin / mixed candidates: uses word-boundary regex \b...\b to prevent cross-word false matches.
+ * - Accepts length >= 1 for CJK, length >= 2 for Latin, and length === 1 for Latin Unicode letters.
+ */
+function isCandidateMatching(candidate: string, lowerText: string): boolean {
+  if (!candidate || !lowerText) return false;
+  const candLower = candidate.toLowerCase();
+
+  // Pure CJK (or Hangul/Kana): substring match is sufficient and correct
+  if (PURE_CJK_REGEX.test(candidate)) {
+    return lowerText.includes(candLower);
+  }
+
+  // Latin / Mixed terms: use word boundary to avoid false positives on partial words (e.g. "ring" matching "ringing")
+  if (candidate.length >= 2) {
+    try {
+      const regex = new RegExp(`\\b${escapeRegex(candLower)}\\b`, 'i');
+      return regex.test(lowerText);
+    } catch {
+      return lowerText.includes(candLower);
+    }
+  }
+
+  // Single-character Latin/letter: require word boundary
+  if (candidate.length === 1 && /\p{L}/u.test(candidate)) {
+    try {
+      const regex = new RegExp(`\\b${escapeRegex(candLower)}\\b`, 'i');
+      return regex.test(lowerText);
+    } catch {
+      return lowerText.includes(candLower);
+    }
+  }
+
+  return false;
+}
+
 /**
  * Filter glossaries to only include items whose original term (or part of it)
  * appears in the original chapter text.
@@ -48,22 +121,18 @@ export function filterRelevantGlossaries(
   }
 
   const lowerText = text.toLowerCase();
-  // Clean version of text without punctuation for CJK / strict match
-  const cleanText = cleanSearchKeyword(text);
 
   return glossaries.filter((item) => {
-    // 1. Direct raw match check on original term
+    // 1. Direct raw whole-term match check on original term (fast path)
     if (lowerText.includes(item.istilah_asli.toLowerCase())) {
       return true;
     }
 
-    // 2. Sub-keywords check (e.g. for dual terms "Spatial Ring / 储物戒")
-    const keywords = getKeywordsFromTerm(item.istilah_asli);
-    for (const kw of keywords) {
-      if (kw.length >= 2) {
-        if (lowerText.includes(kw) || cleanText.includes(kw)) {
-          return true;
-        }
+    // 2. Candidates check with word boundaries and language alternation splitting
+    const candidates = getKeywordsForMatching(item.istilah_asli);
+    for (const cand of candidates) {
+      if (isCandidateMatching(cand, lowerText)) {
+        return true;
       }
     }
 
@@ -85,7 +154,6 @@ export function filterRelevantReferences(
   }
 
   const lowerText = text.toLowerCase();
-  const cleanText = cleanSearchKeyword(text);
 
   return references.filter((item) => {
     // Always include global style or general synopsis rules
@@ -98,10 +166,10 @@ export function filterRelevantReferences(
       return true;
     }
 
-    // Check item name
-    const nameKeywords = getKeywordsFromTerm(item.nama_item);
-    for (const kw of nameKeywords) {
-      if (kw.length >= 2 && (lowerText.includes(kw) || cleanText.includes(kw))) {
+    // Check item name using candidates matching
+    const candidates = getKeywordsForMatching(item.nama_item);
+    for (const cand of candidates) {
+      if (isCandidateMatching(cand, lowerText)) {
         return true;
       }
     }

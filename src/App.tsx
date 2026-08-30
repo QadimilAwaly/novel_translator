@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Novel, Chapter, ReferenceItem, GlossaryItem, ChapterStatus, LanguageCode, AIConfig, GenderTag } from './types';
 import {
   getStoredNovels,
@@ -96,10 +96,6 @@ export default function App() {
   // AI Loading & Notification States
   const [isTranslating, setIsTranslating] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
-  const [promptStats, setPromptStats] = useState<{ glossaryCount: number; hasReference: boolean }>({
-    glossaryCount: 0,
-    hasReference: false,
-  });
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
@@ -166,11 +162,6 @@ export default function App() {
       ? serverData.glossaries.filter((g) => g.novel_id === novelId)
       : getStoredGlossaries(novelId);
     setGlossaries(loadedGloss);
-
-    setPromptStats({
-      glossaryCount: loadedGloss.length,
-      hasReference: loadedRefs.length > 0,
-    });
   };
 
   // Helper: Reload full library directly from server disk
@@ -206,8 +197,27 @@ export default function App() {
     if (!activeNovelId) return;
     loadNovelData(activeNovelId);
   }, [activeNovelId]);
+
   const activeNovel = novels.find((n) => n.id === activeNovelId) || null;
   const activeChapter = chapters.find((c) => c.id === activeChapterId) || null;
+
+  // Reactive Context Injection Stats (calculates estimated live injection for active chapter)
+  const promptStats = useMemo(() => {
+    if (!activeChapter || !activeChapter.teks_asli.trim()) {
+      return {
+        glossaryCount: 0,
+        totalGlossaries: glossaries.length,
+        hasReference: false,
+      };
+    }
+    const relevantGlossaries = filterRelevantGlossaries(activeChapter.teks_asli, glossaries);
+    const relevantReferences = filterRelevantReferences(activeChapter.teks_asli, references);
+    return {
+      glossaryCount: relevantGlossaries.length,
+      totalGlossaries: glossaries.length,
+      hasReference: relevantReferences.length > 0,
+    };
+  }, [activeChapter?.teks_asli, glossaries, references]);
 
   // Auto-Save active novel to Local File System if folder handle is attached
   const syncToLocalFS = async () => {
@@ -721,11 +731,6 @@ export default function App() {
           model: aiConfig.model,
         },
       };
-
-      setPromptStats({
-        glossaryCount: relevantGlossaries.length,
-        hasReference: relevantReferences.length > 0,
-      });
 
       const result = await translateChapterApi(reqData);
       handleUpdateChapterText(activeChapter.teks_asli, result.translatedText);

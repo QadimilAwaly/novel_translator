@@ -32,6 +32,7 @@ interface SplitEditorProps {
   isExtracting: boolean;
   promptStats?: {
     glossaryCount: number;
+    totalGlossaries?: number;
     hasReference: boolean;
   };
 }
@@ -241,7 +242,13 @@ export const SplitEditor: React.FC<SplitEditorProps> = ({
             <strong className="text-indigo-300">
               {promptStats?.glossaryCount ?? 0}
             </strong>{' '}
-            Glosarium &{' '}
+            Glosarium{' '}
+            {typeof promptStats?.totalGlossaries === 'number' && (
+              <span className="text-gray-400 font-normal">
+                ({promptStats.totalGlossaries} Total){' '}
+              </span>
+            )}
+            &{' '}
             <strong className="text-indigo-300">
               {promptStats?.hasReference ? 'Aktif' : 'Standar'}
             </strong>{' '}
