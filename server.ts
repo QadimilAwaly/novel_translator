@@ -77,9 +77,35 @@ async function startServer() {
   // SECURITY HELPERS (audit perbaikan)
   // ============================================================
 
-  // Rate limiter sederhana in-memory per-IP (audit #5)
+  // Rate limiter in-memory per-IP dengan pembersihan berkala (audit #5, step 6)
   const ipHits = new Map<string, number[]>();
+
+  function pruneIpHits(map: Map<string, number[]>, windowMs: number, now: number = Date.now()): number {
+    let removedCount = 0;
+    for (const [ip, hits] of map.entries()) {
+      const active = hits.filter((t) => now - t < windowMs);
+      if (active.length === 0) {
+        map.delete(ip);
+        removedCount++;
+      } else if (active.length !== hits.length) {
+        map.set(ip, active);
+      }
+    }
+    return removedCount;
+  }
+
+  let rateLimitCleanupTimer: NodeJS.Timeout | null = null;
+  function ensureRateLimitCleanup(windowMs: number) {
+    if (rateLimitCleanupTimer) return;
+    const interval = Math.max(60000, windowMs);
+    rateLimitCleanupTimer = setInterval(() => {
+      pruneIpHits(ipHits, windowMs, Date.now());
+    }, interval);
+    rateLimitCleanupTimer.unref();
+  }
+
   function rateLimit(max: number, windowMs: number) {
+    ensureRateLimitCleanup(windowMs);
     return (req: any, res: any, next: any) => {
       const ip = req.ip || req.socket?.remoteAddress || 'unknown';
       const now = Date.now();
