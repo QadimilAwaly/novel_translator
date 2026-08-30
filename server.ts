@@ -379,19 +379,111 @@ function ensurePromptTemplateFile(): void {
     throw lastError || new Error('Gagal menghubungi layanan Gemini AI.');
   };
 
-  // Helper: Clean JSON string
-  const cleanJsonString = (str: string) => {
-    let cleaned = str.trim();
-    if (cleaned.startsWith('```json')) {
-      cleaned = cleaned.slice(7);
-    } else if (cleaned.startsWith('```')) {
-      cleaned = cleaned.slice(3);
+  // Helper: Extract first balanced JSON block { ... } or [ ... ]
+  function extractFirstJsonBlock(input: string): string | null {
+    const firstBrace = input.indexOf('{');
+    const firstBracket = input.indexOf('[');
+
+    let startIdx = -1;
+    let openChar = '{';
+    let closeChar = '}';
+
+    if (firstBrace !== -1 && firstBracket !== -1) {
+      if (firstBrace < firstBracket) {
+        startIdx = firstBrace;
+        openChar = '{';
+        closeChar = '}';
+      } else {
+        startIdx = firstBracket;
+        openChar = '[';
+        closeChar = ']';
+      }
+    } else if (firstBrace !== -1) {
+      startIdx = firstBrace;
+      openChar = '{';
+      closeChar = '}';
+    } else if (firstBracket !== -1) {
+      startIdx = firstBracket;
+      openChar = '[';
+      closeChar = ']';
+    } else {
+      return null;
     }
-    if (cleaned.endsWith('```')) {
-      cleaned = cleaned.slice(0, -3);
+
+    let depth = 0;
+    let inString = false;
+    let isEscaped = false;
+
+    for (let i = startIdx; i < input.length; i++) {
+      const char = input[i];
+
+      if (isEscaped) {
+        isEscaped = false;
+        continue;
+      }
+
+      if (char === '\\' && inString) {
+        isEscaped = true;
+        continue;
+      }
+
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+
+      if (!inString) {
+        if (char === openChar) {
+          depth++;
+        } else if (char === closeChar) {
+          depth--;
+          if (depth === 0) {
+            return input.slice(startIdx, i + 1);
+          }
+        }
+      }
     }
-    return cleaned.trim();
-  };
+
+    return null;
+  }
+
+  // Helper: Robust LLM JSON Parser (Audit Step 4)
+  function cleanJsonString<T = any>(str: string): T {
+    if (!str || typeof str !== 'string' || !str.trim()) {
+      throw new Error('LLM returned empty or non-string response');
+    }
+
+    let text = str.trim();
+
+    // 1. Extract first fenced code block if present
+    const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+    if (fenceMatch && fenceMatch[1]) {
+      text = fenceMatch[1].trim();
+    }
+
+    // 2. Strip single-backtick wrapper if present
+    if (text.startsWith('`') && text.endsWith('`') && text.length >= 2) {
+      text = text.slice(1, -1).trim();
+    }
+
+    // 3. Try direct JSON.parse
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      // 4. Try brace-matching extraction for embedded JSON (preamble/trailing prose)
+      const extracted = extractFirstJsonBlock(text) || extractFirstJsonBlock(str);
+      if (extracted) {
+        try {
+          return JSON.parse(extracted) as T;
+        } catch {
+          // Fall through to error
+        }
+      }
+    }
+
+    const preview = (str.length > 200 ? str.slice(0, 200) + '...' : str).replace(/[\r\n]+/g, ' ');
+    throw new Error(`LLM returned invalid JSON: ${preview}`);
+  }
 
   // Helper: Read/Write App Config File (config.json)
   const CONFIG_PATH = path.join(process.cwd(), 'config.json');
@@ -1544,8 +1636,14 @@ HANYA ekstrak istilah yang penting dan benar-benar berguna untuk konsistensi bab
           prompt,
           jsonOutput: true,
         });
-        const cleaned = cleanJsonString(jsonText);
-        parsed = JSON.parse(cleaned);
+        try {
+          parsed = cleanJsonString<{ terms: any[] }>(jsonText);
+        } catch (e) {
+          return res.status(502).json({
+            error: 'LLM mengembalikan JSON yang tidak valid. Coba lagi atau kurangi panjang bab.',
+            detail: (e instanceof Error ? e.message : String(e)).slice(0, 200),
+          });
+        }
       } else {
         const jsonText = await callGeminiWithRetryAndFallback({
           model,
@@ -1589,8 +1687,14 @@ HANYA ekstrak istilah yang penting dan benar-benar berguna untuk konsistensi bab
             required: ['terms'],
           },
         });
-        const cleaned = cleanJsonString(jsonText);
-        parsed = JSON.parse(cleaned);
+        try {
+          parsed = cleanJsonString<{ terms: any[] }>(jsonText);
+        } catch (e) {
+          return res.status(502).json({
+            error: 'LLM mengembalikan JSON yang tidak valid. Coba lagi atau kurangi panjang bab.',
+            detail: (e instanceof Error ? e.message : String(e)).slice(0, 200),
+          });
+        }
       }
 
       return res.json({
