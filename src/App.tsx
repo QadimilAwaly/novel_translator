@@ -17,7 +17,7 @@ import {
   deleteStoredReference,
   LibraryStorageData
 } from './services/storage';
-import { translateChapterApi, extractGlossaryApi } from './services/api';
+import { translateChapterApi, extractGlossaryApi, authHeaders } from './services/api';
 import { filterRelevantGlossaries, filterRelevantReferences } from './services/contextFilter';
 import { exportNovelAsFolderZip } from './services/exportZip';
 import { setNovelDirHandle, saveNovelToLocalFS, requestFolderPicker, removeNovelDirHandle } from './services/fileSystemStorage';
@@ -56,7 +56,9 @@ export default function App() {
 
   // Fetch config.json on mount (API key TIDAK dikirim server — audit #2)
   useEffect(() => {
-    fetch('/api/config')
+    fetch('/api/config', {
+      headers: authHeaders(),
+    })
       .then((res) => res.json())
       .then((data) => {
         if (data) {
@@ -124,7 +126,7 @@ export default function App() {
 
       await fetch('/api/config', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(body),
       });
     } catch (e) {
@@ -268,7 +270,7 @@ export default function App() {
       // 2. Also send to server endpoint /api/export-novel
       const res = await fetch('/api/export-novel', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           novel: activeNovel,
           chapters,
@@ -301,7 +303,7 @@ export default function App() {
     try {
       const res = await fetch('/api/import-novel-folder', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ folder_path: inputPath.trim() }),
       });
 
@@ -392,7 +394,7 @@ export default function App() {
 
       await fetch('/api/save-chapter', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           folder_path: folderPath,
           chapter_number: chap.nomor_chapter,

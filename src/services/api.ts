@@ -1,9 +1,24 @@
 import { TranslateRequest, ExtractGlossaryRequest, ExtractedTerm } from '../types';
 
+const APP_API_TOKEN_KEY = 'nt_app_api_token';
+
+export function getApiToken(): string | null {
+  try {
+    return localStorage.getItem(APP_API_TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  const t = getApiToken();
+  return t ? { ...extra, 'x-api-token': t } : extra;
+}
+
 export async function translateChapterApi(reqData: TranslateRequest): Promise<{ translatedText: string; suggestedTitle?: string; promptStats?: any }> {
   const response = await fetch('/api/translate', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(reqData),
   });
 
@@ -18,7 +33,7 @@ export async function translateChapterApi(reqData: TranslateRequest): Promise<{ 
 export async function extractGlossaryApi(reqData: ExtractGlossaryRequest): Promise<{ terms: ExtractedTerm[] }> {
   const response = await fetch('/api/extract-glossary', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(reqData),
   });
 

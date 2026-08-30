@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+import crypto from 'crypto';
 import { GoogleGenAI, Type } from '@google/genai';
 
 // Load environment variables (.env.local has precedence over .env)
@@ -13,6 +14,17 @@ dotenv.config();
 
 const currentFilename = typeof import.meta !== 'undefined' && import.meta?.url ? fileURLToPath(import.meta.url) : '';
 const currentDirname = currentFilename ? path.dirname(currentFilename) : process.cwd();
+
+function safeTokenCompare(a: string | undefined, b: string): boolean {
+  const ba = Buffer.from(a ?? '');
+  const bb = Buffer.from(b);
+  if (ba.length !== bb.length) return false;
+  try {
+    return crypto.timingSafeEqual(ba, bb);
+  } catch {
+    return false;
+  }
+}
 
 async function startServer() {
   const app = express();
@@ -51,8 +63,9 @@ async function startServer() {
   const API_TOKEN = process.env.APP_API_TOKEN;
   if (API_TOKEN) {
     app.use('/api', (req, res, next) => {
+      if (req.path === '/config' || req.path === '/api/config') return next(); // exempt (2Y)
       const provided = req.headers['x-api-token'] || req.headers.authorization?.replace(/^Bearer\s+/i, '');
-      if (provided === API_TOKEN) return next();
+      if (typeof provided === 'string' && safeTokenCompare(provided, API_TOKEN)) return next();
       return res.status(401).json({ error: 'Unauthorized: API token diperlukan.' });
     });
   }

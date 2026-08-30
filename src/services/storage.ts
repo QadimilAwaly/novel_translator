@@ -1,4 +1,5 @@
 import { Novel, Chapter, ReferenceItem, GlossaryItem, NovelReferenceData } from '../types';
+import { authHeaders } from './api';
 
 const NOVELS_KEY = 'novel_translator_novels_v1';
 const CHAPTERS_KEY = 'novel_translator_chapters_v1';
@@ -233,7 +234,9 @@ let syncTimeout: ReturnType<typeof setTimeout> | null = null;
 
 export async function fetchServerStorage(): Promise<LibraryStorageData | null> {
   try {
-    const res = await fetch('/api/storage');
+    const res = await fetch('/api/storage', {
+      headers: authHeaders(),
+    });
     if (!res.ok) return null;
     const json = await res.json();
     if (json.status === 'success' && json.data) {
@@ -271,7 +274,7 @@ export function syncServerStorage(customData?: Partial<LibraryStorageData>) {
 
       await fetch('/api/storage/sync', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           novels,
           chapters,
@@ -320,7 +323,7 @@ export function deleteStoredNovel(novelId: string): Novel[] {
   // Explicitly notify server to delete novel and physical folder on disk
   fetch('/api/storage/delete-novel', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ novel_id: novelId }),
   }).catch((err) => console.warn('Failed deleting novel on server:', err));
 
@@ -336,7 +339,7 @@ export function renameStoredNovel(novelId: string, newTitle: string): Novel[] {
 
   fetch('/api/storage/rename-novel', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ novel_id: novelId, new_title: newTitle }),
   }).catch((err) => console.warn('Failed renaming novel on server:', err));
 
@@ -375,7 +378,7 @@ export function deleteStoredChapter(chapterId: string, novelId?: string): Chapte
   // Explicitly notify server to unlink file
   fetch('/api/storage/delete-chapter', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ chapter_id: chapterId, novel_id: novelId }),
   }).catch((err) => console.warn('Failed deleting chapter on server:', err));
 
@@ -462,7 +465,7 @@ export function deleteStoredGlossary(glossaryId: string, novelId?: string): Glos
   // Also call delete endpoint
   fetch('/api/storage/delete-glossary', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ glossary_id: glossaryId, novel_id: novelId }),
   }).catch((err) => console.warn('Failed deleting glossary on server:', err));
 
