@@ -984,7 +984,32 @@ function ensurePromptTemplateFile(): void {
     return scanAndSyncNovelFolders(result);
   };
 
-  const saveLibraryStorage = (data: {
+  // Helper: Invariant check for Chapter modification (Audit-Daya #06)
+  // Chapter considered dirty if any core field (number, title, status, original text, or translated text) changed
+  const isChapterDirty = (prev: StoredChapter | undefined, next: StoredChapter): boolean => {
+    if (!prev) return true; // New chapter
+    return (
+      prev.nomor_chapter !== next.nomor_chapter ||
+      prev.judul_chapter !== next.judul_chapter ||
+      prev.status_pengerjaan !== next.status_pengerjaan ||
+      prev.teks_asli !== next.teks_asli ||
+      prev.teks_terjemahan !== next.teks_terjemahan
+    );
+  };
+
+  // Helper: Deep compare references for a single novel
+  const areReferencesEqual = (prevRefs: StoredReference[], nextRefs: StoredReference[]): boolean => {
+    if (prevRefs.length !== nextRefs.length) return false;
+    return JSON.stringify(prevRefs) === JSON.stringify(nextRefs);
+  };
+
+  // Helper: Deep compare glossaries for a single novel
+  const areGlossariesEqual = (prevGloss: StoredGlossary[], nextGloss: StoredGlossary[]): boolean => {
+    if (prevGloss.length !== nextGloss.length) return false;
+    return JSON.stringify(prevGloss) === JSON.stringify(nextGloss);
+  };
+
+  const saveLibraryStorage = async (data: {
     novels?: StoredNovel[];
     chapters?: StoredChapter[];
     references?: StoredReference[];
@@ -993,11 +1018,16 @@ function ensurePromptTemplateFile(): void {
     const current = readLibraryStorage();
     const newNovels = Array.isArray(data.novels) ? data.novels : current.novels;
     const libraryBase = getLibraryStorageDir();
+    let hasChanges = false;
 
     // 1. Detect deleted novels and remove physical folders on disk!
     if (Array.isArray(data.novels)) {
       const remainingIds = new Set(newNovels.map((n) => n.id));
       const deletedNovels = current.novels.filter((n) => !remainingIds.has(n.id));
+
+      if (deletedNovels.length > 0) {
+        hasChanges = true;
+      }
 
       for (const delNovel of deletedNovels) {
         const cleanTitle = sanitizeFilename(delNovel.judul || 'Novel_' + delNovel.id);
@@ -1031,6 +1061,10 @@ function ensurePromptTemplateFile(): void {
       const remainingChapIds = new Set(data.chapters.map((c) => c.id));
       const deletedChapters = current.chapters.filter((c) => !remainingChapIds.has(c.id));
 
+      if (deletedChapters.length > 0) {
+        hasChanges = true;
+      }
+
       for (const delChap of deletedChapters) {
         const parentNovel = newNovels.find((n) => n.id === delChap.novel_id);
         if (parentNovel) {
@@ -1042,7 +1076,7 @@ function ensurePromptTemplateFile(): void {
           const chapFilePath = path.join(novelFolder, `Chapter_${padNum}.md`);
           if (fs.existsSync(chapFilePath)) {
             try {
-              fs.unlinkSync(chapFilePath);
+              await fs.promises.unlink(chapFilePath);
             } catch (unlinkErr) {
               console.error('Error unlinking deleted chapter file:', unlinkErr);
             }
@@ -1063,8 +1097,9 @@ function ensurePromptTemplateFile(): void {
 
           if (fs.existsSync(oldFolder) && !fs.existsSync(newFolder)) {
             try {
-              fs.renameSync(oldFolder, newFolder);
+              await fs.promises.rename(oldFolder, newFolder);
               novel.folder_path = newFolder;
+              hasChanges = true;
             } catch (renErr) {
               console.error('Error renaming novel folder on disk:', renErr);
             }
@@ -1078,61 +1113,96 @@ function ensurePromptTemplateFile(): void {
       chapters: Array.isArray(data.chapters) ? data.chapters : current.chapters,
       references: Array.isArray(data.references) ? data.references : current.references,
       glossaries: Array.isArray(data.glossaries) ? data.glossaries : current.glossaries,
-      last_updated: new Date().toISOString(),
+      last_updated: current.last_updated,
     };
 
-    const filePath = getLibraryIndexFilePath();
-    const manifest = {
-      novels: newNovels,
-      last_updated: new Date().toISOString(),
-    };
-    fs.writeFileSync(filePath, JSON.stringify(manifest, null, 2), 'utf-8');
-    // Auto-sync physical folders for existing novels
+    // Map previous chapters for O(1) dirty checking
+    const currentChapMap = new Map(current.chapters.map((c) => [c.id, c]));
+    const asyncWritePromises: Promise<void>[] = [];
+
     try {
       for (const novel of updated.novels) {
         const novelFolder = resolveNovelFolderOnDisk(libraryBase, novel);
         if (!fs.existsSync(novelFolder)) {
-          fs.mkdirSync(novelFolder, { recursive: true });
+          await fs.promises.mkdir(novelFolder, { recursive: true });
+          hasChanges = true;
         }
         const metadataFolder = path.join(novelFolder, 'metadata');
         if (!fs.existsSync(metadataFolder)) {
-          fs.mkdirSync(metadataFolder, { recursive: true });
+          await fs.promises.mkdir(metadataFolder, { recursive: true });
+          hasChanges = true;
         }
 
         const novelRefs = updated.references.filter((r: StoredReference) => r.novel_id === novel.id);
+        const prevRefs = current.references.filter((r: StoredReference) => r.novel_id === novel.id);
+
         const novelGloss = updated.glossaries.filter((g: StoredGlossary) => g.novel_id === novel.id);
+        const prevGloss = current.glossaries.filter((g: StoredGlossary) => g.novel_id === novel.id);
+
         const novelChaps = updated.chapters.filter((c: StoredChapter) => c.novel_id === novel.id);
 
-        const synopsisItem = novelRefs.find((r: StoredReference) => r.nama_item?.toLowerCase().includes('sinopsis') || r.kategori === 'Sinopsis');
-        const styleItem = novelRefs.find((r: StoredReference) => r.kategori === 'Gaya Bahasa');
+        const refPath = path.join(metadataFolder, 'reference.json');
+        const glossPath = path.join(metadataFolder, 'glossary.json');
 
-        // Write metadata/reference.json
-        const refPayload = {
-          novel_title: novel.judul,
-          source_language: novel.bahasa_sumber,
-          target_language: novel.bahasa_target,
-          synopsis: synopsisItem?.deskripsi || '',
-          writing_style: styleItem?.deskripsi || '',
-          reference_items: novelRefs,
-          updated_at: new Date().toISOString(),
-        };
-        fs.writeFileSync(path.join(metadataFolder, 'reference.json'), JSON.stringify(refPayload, null, 2), 'utf-8');
-
-        // Write metadata/glossary.json
-        fs.writeFileSync(path.join(metadataFolder, 'glossary.json'), JSON.stringify(novelGloss, null, 2), 'utf-8');
-
-        // Write Chapter Markdown files
-        for (const chap of novelChaps) {
-          const padNum = String(Number(chap.nomor_chapter) || 1).padStart(2, '0');
-          const safeChapTitle = sanitizeFilename(chap.judul_chapter || 'Chapter ' + chap.nomor_chapter);
-          const chapPath = path.join(novelFolder, `Chapter_${padNum}.md`);
-          const divider = '---';
-          const mdContent = `# Chapter ${chap.nomor_chapter}: ${safeChapTitle}\n\n> **Novel:** ${sanitizeFilename(novel.judul)}\n> **Status:** ${chap.status_pengerjaan}\n> **Bahasa:** ${novel.bahasa_sumber} -> ${novel.bahasa_target}\n> **Updated:** ${new Date().toLocaleString()}\n\n${divider}\n\n## Hasil Terjemahan (${novel.bahasa_target})\n\n${chap.teks_terjemahan || '*(Belum diterjemahkan)*'}\n\n${divider}\n\n## Teks Asli (${novel.bahasa_sumber})\n\n${chap.teks_asli || '*(Kosong)*'}\n`;
-          fs.writeFileSync(chapPath, mdContent, 'utf-8');
+        // 4. Dirty check references: only write if missing or modified
+        const isRefDirty = !fs.existsSync(refPath) || (Array.isArray(data.references) && !areReferencesEqual(prevRefs, novelRefs));
+        if (isRefDirty) {
+          hasChanges = true;
+          const synopsisItem = novelRefs.find((r: StoredReference) => r.nama_item?.toLowerCase().includes('sinopsis') || r.kategori === 'Sinopsis');
+          const styleItem = novelRefs.find((r: StoredReference) => r.kategori === 'Gaya Bahasa');
+          const refPayload = {
+            novel_title: novel.judul,
+            source_language: novel.bahasa_sumber,
+            target_language: novel.bahasa_target,
+            synopsis: synopsisItem?.deskripsi || '',
+            writing_style: styleItem?.deskripsi || '',
+            reference_items: novelRefs,
+            updated_at: new Date().toISOString(),
+          };
+          asyncWritePromises.push(fs.promises.writeFile(refPath, JSON.stringify(refPayload, null, 2), 'utf-8'));
         }
+
+        // 5. Dirty check glossaries: only write if missing or modified
+        const isGlossDirty = !fs.existsSync(glossPath) || (Array.isArray(data.glossaries) && !areGlossariesEqual(prevGloss, novelGloss));
+        if (isGlossDirty) {
+          hasChanges = true;
+          asyncWritePromises.push(fs.promises.writeFile(glossPath, JSON.stringify(novelGloss, null, 2), 'utf-8'));
+        }
+
+        // 6. Dirty check chapters: only write modified chapters (skip identical files)
+        if (Array.isArray(data.chapters)) {
+          for (const chap of novelChaps) {
+            const padNum = String(Number(chap.nomor_chapter) || 1).padStart(2, '0');
+            const safeChapTitle = sanitizeFilename(chap.judul_chapter || 'Chapter ' + chap.nomor_chapter);
+            const chapPath = path.join(novelFolder, `Chapter_${padNum}.md`);
+            const prevChap = currentChapMap.get(chap.id);
+
+            if (!fs.existsSync(chapPath) || isChapterDirty(prevChap, chap)) {
+              hasChanges = true;
+              const divider = '---';
+              const mdContent = `# Chapter ${chap.nomor_chapter}: ${safeChapTitle}\n\n> **Novel:** ${sanitizeFilename(novel.judul)}\n> **Status:** ${chap.status_pengerjaan}\n> **Bahasa:** ${novel.bahasa_sumber} -> ${novel.bahasa_target}\n> **Updated:** ${new Date().toLocaleString()}\n\n${divider}\n\n## Hasil Terjemahan (${novel.bahasa_target})\n\n${chap.teks_terjemahan || '*(Belum diterjemahkan)*'}\n\n${divider}\n\n## Teks Asli (${novel.bahasa_sumber})\n\n${chap.teks_asli || '*(Kosong)*'}\n`;
+              asyncWritePromises.push(fs.promises.writeFile(chapPath, mdContent, 'utf-8'));
+            }
+          }
+        }
+      }
+
+      // Execute all granular file writes concurrently
+      if (asyncWritePromises.length > 0) {
+        await Promise.all(asyncWritePromises);
       }
     } catch (syncErr) {
       console.warn('Physical folder auto-sync warning:', syncErr);
+    }
+
+    if (hasChanges) {
+      updated.last_updated = new Date().toISOString();
+      const filePath = getLibraryIndexFilePath();
+      const manifest = {
+        novels: newNovels,
+        last_updated: updated.last_updated,
+      };
+      await fs.promises.writeFile(filePath, JSON.stringify(manifest, null, 2), 'utf-8');
     }
 
     return updated;
@@ -1186,9 +1256,9 @@ function ensurePromptTemplateFile(): void {
   });
 
   // API Route: Sync Full/Partial Storage to Disk
-  app.post('/api/storage/sync', rateLimit(60, 60000), (req, res) => {
+  app.post('/api/storage/sync', rateLimit(60, 60000), async (req, res) => {
     try {
-      const updated = saveLibraryStorage(req.body || {});
+      const updated = await saveLibraryStorage(req.body || {});
       res.json({ status: 'success', data: updated });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Gagal sinkronisasi storage';
@@ -1197,7 +1267,7 @@ function ensurePromptTemplateFile(): void {
     }
   });
   // API Route: Delete Novel and its Physical Folder on Disk
-  app.post('/api/storage/delete-novel', rateLimit(60, 60000), (req, res) => {
+  app.post('/api/storage/delete-novel', rateLimit(60, 60000), async (req, res) => {
     try {
       const { novel_id } = req.body || {};
       if (!novel_id || typeof novel_id !== 'string') {
@@ -1210,7 +1280,7 @@ function ensurePromptTemplateFile(): void {
       const updatedReferences = current.references.filter((r) => r.novel_id !== novel_id);
       const updatedGlossaries = current.glossaries.filter((g) => g.novel_id !== novel_id);
 
-      const updated = saveLibraryStorage({
+      const updated = await saveLibraryStorage({
         novels: updatedNovels,
         chapters: updatedChapters,
         references: updatedReferences,
@@ -1226,7 +1296,7 @@ function ensurePromptTemplateFile(): void {
   });
 
   // API Route: Delete Chapter and its Markdown file on Disk
-  app.post('/api/storage/delete-chapter', rateLimit(60, 60000), (req, res) => {
+  app.post('/api/storage/delete-chapter', rateLimit(60, 60000), async (req, res) => {
     try {
       const { chapter_id } = req.body || {};
       if (!chapter_id || typeof chapter_id !== 'string') {
@@ -1236,7 +1306,7 @@ function ensurePromptTemplateFile(): void {
       const current = readLibraryStorage();
       const updatedChapters = current.chapters.filter((c) => c.id !== chapter_id);
 
-      const updated = saveLibraryStorage({
+      const updated = await saveLibraryStorage({
         chapters: updatedChapters,
       });
 
@@ -1248,7 +1318,7 @@ function ensurePromptTemplateFile(): void {
     }
   });
   // API Route: Delete Glossary Item from Storage
-  app.post('/api/storage/delete-glossary', rateLimit(60, 60000), (req, res) => {
+  app.post('/api/storage/delete-glossary', rateLimit(60, 60000), async (req, res) => {
     try {
       const { glossary_id, novel_id } = req.body || {};
       if (!glossary_id || typeof glossary_id !== 'string') {
@@ -1258,7 +1328,7 @@ function ensurePromptTemplateFile(): void {
       const current = readLibraryStorage();
       const updatedGlossaries = current.glossaries.filter((g) => g.id !== glossary_id);
 
-      const updated = saveLibraryStorage({
+      const updated = await saveLibraryStorage({
         glossaries: updatedGlossaries,
       });
 
@@ -1272,7 +1342,7 @@ function ensurePromptTemplateFile(): void {
 
 
   // API Route: Rename Novel and its Physical Directory on Disk
-  app.post('/api/storage/rename-novel', rateLimit(60, 60000), (req, res) => {
+  app.post('/api/storage/rename-novel', rateLimit(60, 60000), async (req, res) => {
     try {
       const { novel_id, new_title } = req.body || {};
       if (!novel_id || !new_title || typeof new_title !== 'string') {
@@ -1284,7 +1354,7 @@ function ensurePromptTemplateFile(): void {
         n.id === novel_id ? { ...n, judul: new_title.trim(), updatedAt: new Date().toISOString() } : n
       );
 
-      const updated = saveLibraryStorage({
+      const updated = await saveLibraryStorage({
         novels: updatedNovels,
       });
 
