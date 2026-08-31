@@ -1,13 +1,14 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
+import https from 'https';
+import http from 'http';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
 import { GoogleGenAI, Type } from '@google/genai';
 import { makeDataSection, PROMPT_INJECTION_GUARD, buildTranslateUserPrompt } from './src/services/promptBuilder';
 import { extractChapterNumber } from './src/services/chapterParser';
-
 // Load environment variables (.env.local has precedence over .env)
 if (fs.existsSync('.env.local')) {
   dotenv.config({ path: '.env.local' });
@@ -157,12 +158,39 @@ async function startServer() {
     return '';
   }
 
-  // Fetch dengan timeout (audit #8)
-  async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 60000): Promise<Response> {
+  // Reusable HTTP/HTTPS keep-alive agents for external LLM calls (Audit-Daya #02)
+  const httpsAgent = new https.Agent({
+    keepAlive: true,
+    keepAliveMsecs: 30000,
+    maxSockets: 25,
+    maxFreeSockets: 10,
+    timeout: 60000,
+  });
+
+  const httpAgent = new http.Agent({
+    keepAlive: true,
+    keepAliveMsecs: 30000,
+    maxSockets: 25,
+    maxFreeSockets: 10,
+    timeout: 60000,
+  });
+
+  // Fetch dengan timeout & HTTP keep-alive connection pooling (audit #8 & audit-daya #02)
+  async function fetchWithTimeout(
+    url: string,
+    options: RequestInit & { agent?: http.Agent | https.Agent } = {},
+    timeoutMs = 60000
+  ): Promise<Response> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      return await fetch(url, { ...options, signal: controller.signal });
+      const isHttps = url.startsWith('https:');
+      const agent = options.agent || (isHttps ? httpsAgent : httpAgent);
+      return await fetch(url, {
+        ...options,
+        signal: controller.signal,
+        agent,
+      } as RequestInit);
     } finally {
       clearTimeout(timer);
     }
@@ -314,13 +342,20 @@ function ensurePromptTemplateFile(): void {
     throw lastError;
   };
 
+  // In-memory cache for GoogleGenAI clients to reuse connection pool & avoid per-request allocations (Audit-Daya #02)
+  const genAIClientCache = new Map<string, GoogleGenAI>();
+
   // Helper: Get Gemini AI Client
   const getGenAI = (customKey?: string) => {
     const apiKey = customKey || process.env.GEMINI_API_KEY;
     if (!apiKey) {
       throw new Error('GEMINI_API_KEY belum dikonfigurasi.');
     }
-    return new GoogleGenAI({
+    const cached = genAIClientCache.get(apiKey);
+    if (cached) {
+      return cached;
+    }
+    const client = new GoogleGenAI({
       apiKey,
       httpOptions: {
         headers: {
@@ -328,6 +363,8 @@ function ensurePromptTemplateFile(): void {
         },
       },
     });
+    genAIClientCache.set(apiKey, client);
+    return client;
   };
 
   // Helper: Gemini Call with Automatic Retry & Model Fallback on 503/High Demand
