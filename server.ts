@@ -317,6 +317,15 @@ function ensurePromptTemplateFile(): void {
     return data.choices?.[0]?.message?.content || '';
   };
 
+  // Helper: Low-overhead retry logger (Audit-Daya #08)
+  // Di dev mode: log semua retry untuk visibilitas debugging
+  // Di production mode: redam log attempt pertama yang noisy, hanya log jika attempt >= 2 atau DEBUG diset
+  const logRetryWarn = (msg: string, attempt: number) => {
+    if (!isProduction || attempt >= 2 || process.env.DEBUG) {
+      console.warn(msg);
+    }
+  };
+
   // Helper: OpenRouter with Retry
   const callOpenRouterWithRetry = async (params: {
     model: string;
@@ -334,7 +343,7 @@ function ensurePromptTemplateFile(): void {
         const errStr = String(err?.message || err);
         const isTransient = errStr.includes('503') || errStr.includes('429') || errStr.includes('502') || errStr.includes('504');
         if (isTransient && attempt < 3) {
-          console.warn(`[OpenRouter Retry ${attempt}] ${errStr}`);
+          logRetryWarn(`[OpenRouter Retry ${attempt}] ${errStr}`, attempt);
           await sleep(1500 * attempt);
         } else {
           throw err;
@@ -423,10 +432,8 @@ function ensurePromptTemplateFile(): void {
             errStr.includes('high demand') ||
             errStr.includes('429') ||
             errStr.includes('RESOURCE_EXHAUSTED');
-
-          console.warn(`[Gemini Attempt ${attempt} on ${currentModel}] Failed:`, errStr);
-
           if (isTransient && attempt < 2) {
+            logRetryWarn(`[Gemini Attempt ${attempt} on ${currentModel}] Failed: ${errStr}`, attempt);
             await sleep(1500 * attempt);
           } else if (!isTransient) {
             // Non-transient error (e.g., bad API key, prompt error)
