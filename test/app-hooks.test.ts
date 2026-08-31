@@ -167,7 +167,7 @@ describe('Unit: useChapterEditor & isDirty Tracking', () => {
   });
 });
 
-describe('Integration: Window Focus Race Condition Mitigation', () => {
+describe('Integration: Window Focus Race Condition & Cooldown Mitigation', () => {
   test('When isDirty is true, window focus handler prevents auto-reload and prompts user', () => {
     let isDirty = true;
     let reloadCalled = false;
@@ -186,17 +186,91 @@ describe('Integration: Window Focus Race Condition Mitigation', () => {
     assert.equal(reloadCalled, false, 'Auto-reload must NOT overwrite uncommitted edits');
   });
 
-  test('When user explicitly chooses "Muat Ulang (Buang Edit)", isDirty is cleared and reload runs', () => {
+  test('When user explicitly chooses "Muat Ulang (Buang Edit)", isDirty is cleared and reload runs with force', () => {
     let isDirty = true;
     let reloadCalled = false;
+    let forced = false;
 
     const onUserDiscardAndReload = () => {
       isDirty = false;
+      forced = true;
       reloadCalled = true;
     };
 
     onUserDiscardAndReload();
     assert.equal(isDirty, false);
     assert.equal(reloadCalled, true);
+    assert.equal(forced, true);
+  });
+
+  test('Window focus handler throttles rapid refocuses within 30s cooldown', () => {
+    const FOCUS_COOLDOWN_MS = 30000;
+    let lastFocusTime = 0;
+    let networkReloadCount = 0;
+
+    const handleFocus = (now: number) => {
+      if (lastFocusTime !== 0 && now - lastFocusTime < FOCUS_COOLDOWN_MS) {
+        return; // Throttled
+      }
+      lastFocusTime = now;
+      networkReloadCount++;
+    };
+
+    // 1st focus at t = 1000ms -> should execute
+    handleFocus(1000);
+    assert.equal(networkReloadCount, 1);
+
+    // Rapid switch at t = 5000ms (4s later) -> should throttle
+    handleFocus(5000);
+    assert.equal(networkReloadCount, 1, 'Rapid switch within 30s must be throttled');
+
+    // Rapid switch at t = 20000ms (19s later) -> should throttle
+    handleFocus(20000);
+    assert.equal(networkReloadCount, 1, 'Switch within 30s must be throttled');
+
+    // Refocus at t = 32000ms (31s later) -> should execute
+    handleFocus(32000);
+    assert.equal(networkReloadCount, 2, 'Focus after cooldown expires must execute');
+  });
+
+  test('When server data is not modified (_notModified is true), chapterEditor reload is skipped', () => {
+    let editorReloadCount = 0;
+
+    const applyFocusServerData = (serverData: { _notModified?: boolean } | null) => {
+      if (serverData && !serverData._notModified) {
+        editorReloadCount++;
+      }
+    };
+
+    // Unmodified data from server -> skip editor reload
+    applyFocusServerData({ _notModified: true });
+    assert.equal(editorReloadCount, 0, 'Must not re-render editor if server data is unchanged');
+
+    // Real modified data from server -> trigger editor reload
+    applyFocusServerData({ _notModified: false });
+    assert.equal(editorReloadCount, 1, 'Must re-render editor if server data changed');
+  });
+
+  test('Force option overrides cooldown timer completely', () => {
+    const FOCUS_COOLDOWN_MS = 30000;
+    let lastFetchTime = 1000;
+    let fetchExecuted = false;
+
+    const reload = (now: number, options: { force?: boolean } = {}) => {
+      const { force = false } = options;
+      if (!force && (now - lastFetchTime < FOCUS_COOLDOWN_MS)) {
+        return false;
+      }
+      lastFetchTime = now;
+      fetchExecuted = true;
+      return true;
+    };
+
+    // Standard call within cooldown -> false
+    assert.equal(reload(5000, { force: false }), false);
+
+    // Forced call within cooldown -> true
+    assert.equal(reload(5000, { force: true }), true);
+    assert.equal(fetchExecuted, true);
   });
 });

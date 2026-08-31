@@ -158,9 +158,13 @@ export default function App() {
     isDirtyRef.current = chapterEditor.isDirty;
   }, [chapterEditor.isDirty]);
 
-  // 1. Initial Load of Novels & Window Focus Auto-Reload with isDirty protection
+  // 1. Initial Load of Novels & Window Focus Auto-Reload with isDirty protection & Focus Cooldown (Finding #03)
+  const FOCUS_COOLDOWN_MS = 30000; // 30s cooldown for window refocus
+  const lastFocusTimeRef = useRef<number>(0);
+
   useEffect(() => {
-    reloadLibraryFromDisk().then((serverData) => {
+    // Initial mount: muat data langsung (force)
+    reloadLibraryFromDisk(undefined, { force: true }).then((serverData) => {
       if (serverData && serverData.novels.length > 0) {
         const targetId = activeNovelId || serverData.novels[0].id;
         chapterEditor.reloadFromServer(targetId, serverData);
@@ -168,8 +172,14 @@ export default function App() {
     });
 
     const handleFocus = () => {
+      const now = Date.now();
+      if (lastFocusTimeRef.current !== 0 && now - lastFocusTimeRef.current < FOCUS_COOLDOWN_MS) {
+        // Skip focus reload jika baru saja refetch dalam window cooldown (30s)
+        return;
+      }
+
       if (isDirtyRef.current) {
-        // Jangan overwrite uncommitted edits; beri tahu user
+        // Jangan overwrite uncommitted edits; beri tahu user (audit #8)
         showToast({
           message: 'Ada perubahan belum disimpan di chapter. Muat ulang dari disk akan menimpa edit Anda.',
           actions: [
@@ -177,7 +187,8 @@ export default function App() {
               label: 'Muat Ulang (Buang Edit)',
               onClick: () => {
                 chapterEditor.markClean();
-                reloadLibraryFromDisk().then((serverData) => {
+                lastFocusTimeRef.current = Date.now();
+                reloadLibraryFromDisk(undefined, { force: true }).then((serverData) => {
                   if (serverData && activeNovelId) {
                     chapterEditor.reloadFromServer(activeNovelId, serverData);
                   }
@@ -192,8 +203,11 @@ export default function App() {
         });
         return;
       }
-      reloadLibraryFromDisk().then((serverData) => {
-        if (serverData && activeNovelId) {
+
+      lastFocusTimeRef.current = now;
+      reloadLibraryFromDisk({ cooldownMs: FOCUS_COOLDOWN_MS }).then((serverData) => {
+        // Hanya reload chapterEditor jika data di server benar-benar berubah
+        if (serverData && !serverData._notModified && activeNovelId) {
           chapterEditor.reloadFromServer(activeNovelId, serverData);
         }
       });
@@ -735,8 +749,11 @@ export default function App() {
         onSelectFolderForActiveNovel={handleSelectFolderForActiveNovel}
         onReExportNovelToLocal={handleReExportNovelToLocal}
         onReloadFromDisk={async () => {
-          const success = await reloadLibraryFromDisk();
-          if (success) {
+          const serverData = await reloadLibraryFromDisk(undefined, { force: true });
+          if (serverData && activeNovelId) {
+            chapterEditor.reloadFromServer(activeNovelId, serverData);
+          }
+          if (serverData) {
             showToast('Seluruh data novel, bab, dan glosarium berhasil dimuat ulang dari disk!');
           } else {
             showToast('Gagal memuat ulang data dari disk.');

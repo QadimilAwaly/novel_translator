@@ -222,12 +222,15 @@ export const initialGlossaries: GlossaryItem[] = [
     konteks: 'Cairan mana bersinar murni untuk transmutasi'
   }
 ];
+export const LAST_UPDATED_KEY = 'novel_translator_pro_last_updated';
+
 export interface LibraryStorageData {
   novels: Novel[];
   chapters: Chapter[];
   references: ReferenceItem[];
   glossaries: GlossaryItem[];
   last_updated?: string;
+  _notModified?: boolean;
 }
 
 let syncTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -241,17 +244,31 @@ export async function fetchServerStorage(): Promise<LibraryStorageData | null> {
     const json = await res.json();
     if (json.status === 'success' && json.data) {
       const data: LibraryStorageData = json.data;
-      if (Array.isArray(data.novels)) {
-        localStorage.setItem(NOVELS_KEY, JSON.stringify(data.novels));
-      }
-      if (Array.isArray(data.chapters)) {
-        localStorage.setItem(CHAPTERS_KEY, JSON.stringify(data.chapters));
-      }
-      if (Array.isArray(data.references)) {
-        localStorage.setItem(REFERENCES_KEY, JSON.stringify(data.references));
-      }
-      if (Array.isArray(data.glossaries)) {
-        localStorage.setItem(GLOSSARIES_KEY, JSON.stringify(data.glossaries));
+      const cachedLastUpdated = typeof localStorage !== 'undefined' ? localStorage.getItem(LAST_UPDATED_KEY) : null;
+      const isUnchanged = Boolean(
+        cachedLastUpdated &&
+        data.last_updated &&
+        cachedLastUpdated === data.last_updated
+      );
+
+      data._notModified = isUnchanged;
+
+      if (!isUnchanged && typeof localStorage !== 'undefined') {
+        if (data.last_updated) {
+          localStorage.setItem(LAST_UPDATED_KEY, data.last_updated);
+        }
+        if (Array.isArray(data.novels)) {
+          localStorage.setItem(NOVELS_KEY, JSON.stringify(data.novels));
+        }
+        if (Array.isArray(data.chapters)) {
+          localStorage.setItem(CHAPTERS_KEY, JSON.stringify(data.chapters));
+        }
+        if (Array.isArray(data.references)) {
+          localStorage.setItem(REFERENCES_KEY, JSON.stringify(data.references));
+        }
+        if (Array.isArray(data.glossaries)) {
+          localStorage.setItem(GLOSSARIES_KEY, JSON.stringify(data.glossaries));
+        }
       }
       return data;
     }
@@ -272,7 +289,7 @@ export function syncServerStorage(customData?: Partial<LibraryStorageData>) {
       const references = customData?.references || getAllStoredReferences();
       const glossaries = customData?.glossaries || getAllStoredGlossaries();
 
-      await fetch('/api/storage/sync', {
+      const res = await fetch('/api/storage/sync', {
         method: 'POST',
         headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
@@ -282,6 +299,12 @@ export function syncServerStorage(customData?: Partial<LibraryStorageData>) {
           glossaries,
         }),
       });
+      if (res.ok && typeof localStorage !== 'undefined') {
+        const json = await res.json().catch(() => null);
+        if (json?.data?.last_updated) {
+          localStorage.setItem(LAST_UPDATED_KEY, json.data.last_updated);
+        }
+      }
     } catch (err) {
       console.warn('Failed syncing library to server storage:', err);
     }
