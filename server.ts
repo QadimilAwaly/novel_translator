@@ -60,7 +60,11 @@ async function startServer() {
     next();
   });
 
-  app.use(express.json({ limit: '10mb' }));
+  // Bulk endpoints receive higher 10mb payload limit for full novel export & folder imports (Audit-Daya #05)
+  app.use('/api/export-novel', express.json({ limit: '10mb' }));
+  app.use('/api/import-novel-folder', express.json({ limit: '10mb' }));
+  // Regular endpoints receive tighter 2mb payload limit
+  app.use(express.json({ limit: '2mb' }));
 
   // Optional API token auth — aktif hanya jika env APP_API_TOKEN diset (audit #4)
   const API_TOKEN = process.env.APP_API_TOKEN;
@@ -80,8 +84,10 @@ async function startServer() {
   // SECURITY HELPERS (audit perbaikan)
   // ============================================================
 
-  // Rate limiter in-memory per-IP dengan pembersihan berkala (audit #5, step 6)
+  // Rate limiter in-memory per-IP dengan lazy on-demand pruning (Audit-Daya #07)
+  // Menghilangkan background timer 60s agar CPU tablet 100% idle saat tidak ada request
   const ipHits = new Map<string, number[]>();
+  let lastPruneTime = 0;
 
   function pruneIpHits(map: Map<string, number[]>, windowMs: number, now: number = Date.now()): number {
     let removedCount = 0;
@@ -97,21 +103,17 @@ async function startServer() {
     return removedCount;
   }
 
-  let rateLimitCleanupTimer: NodeJS.Timeout | null = null;
-  function ensureRateLimitCleanup(windowMs: number) {
-    if (rateLimitCleanupTimer) return;
-    const interval = Math.max(60000, windowMs);
-    rateLimitCleanupTimer = setInterval(() => {
-      pruneIpHits(ipHits, windowMs, Date.now());
-    }, interval);
-    rateLimitCleanupTimer.unref();
-  }
-
   function rateLimit(max: number, windowMs: number) {
-    ensureRateLimitCleanup(windowMs);
-    return (req: any, res: any, next: any) => {
+    return (req: express.Request, res: express.Response, next: express.NextFunction) => {
       const ip = req.ip || req.socket?.remoteAddress || 'unknown';
       const now = Date.now();
+
+      // Lazy on-demand pruning: bersihkan entri kadaluarsa saat ada request masuk jika waktu window sudah berlalu
+      if (now - lastPruneTime > windowMs && ipHits.size > 0) {
+        pruneIpHits(ipHits, windowMs, now);
+        lastPruneTime = now;
+      }
+
       const hits = (ipHits.get(ip) || []).filter((t) => now - t < windowMs);
       if (hits.length >= max) {
         return res.status(429).json({ error: 'Terlalu banyak permintaan. Coba lagi sebentar lagi.' });

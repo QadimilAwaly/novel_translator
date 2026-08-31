@@ -161,3 +161,109 @@ describe('HTTP Integration: Rate Limiter Middleware', () => {
     assert.equal(res.status, 200, 'Request should be allowed again after window expires');
   });
 });
+
+describe('Unit: Lazy On-Demand Rate Limit Pruning (Audit-Daya #07)', () => {
+  test('should lazily prune expired IP entries on incoming request without background timer', () => {
+    const ipHits = new Map<string, number[]>();
+    let lastPruneTime = 0;
+    const windowMs = 1000;
+    const max = 5;
+
+    const rateLimitMiddleware = (reqIp: string, now: number) => {
+      // Lazy prune
+      if (now - lastPruneTime > windowMs && ipHits.size > 0) {
+        pruneIpHits(ipHits, windowMs, now);
+        lastPruneTime = now;
+      }
+
+      const hits = (ipHits.get(reqIp) || []).filter((t) => now - t < windowMs);
+      if (hits.length >= max) {
+        return { status: 429 };
+      }
+      hits.push(now);
+      ipHits.set(reqIp, hits);
+      return { status: 200 };
+    };
+
+    // IP 1 and IP 2 make requests at t = 100
+    rateLimitMiddleware('1.1.1.1', 100);
+    rateLimitMiddleware('2.2.2.2', 100);
+    assert.equal(ipHits.size, 2);
+
+    // At t = 1500 (window expired for IP 1 & 2), IP 3 makes a request
+    const res = rateLimitMiddleware('3.3.3.3', 1500);
+    assert.equal(res.status, 200);
+
+    // IP 1 & 2 should have been lazily pruned from map; only IP 3 remains
+    assert.equal(ipHits.size, 1);
+    assert.ok(ipHits.has('3.3.3.3'));
+    assert.ok(!ipHits.has('1.1.1.1'));
+    assert.ok(!ipHits.has('2.2.2.2'));
+  });
+});
+
+describe('HTTP Integration: Per-Route JSON Body Parser Limits (Audit-Daya #05)', () => {
+  let server: Server;
+  let baseUrl: string;
+  const TEST_PORT = 3281;
+
+  beforeAll(async () => {
+    const app = express();
+
+    // Bulk endpoints: 10mb
+    app.use('/api/bulk-test', express.json({ limit: '10mb' }));
+    // Default regular endpoints: 2mb
+    app.use(express.json({ limit: '2mb' }));
+
+    app.post('/api/regular-test', (req, res) => {
+      res.json({ received: req.body?.data?.length || 0 });
+    });
+
+    app.post('/api/bulk-test', (req, res) => {
+      res.json({ received: req.body?.data?.length || 0 });
+    });
+
+    await new Promise<void>((resolve) => {
+      server = app.listen(TEST_PORT, '127.0.0.1', () => {
+        baseUrl = `http://127.0.0.1:${TEST_PORT}`;
+        resolve();
+      });
+    });
+  });
+
+  afterAll(async () => {
+    if (server) {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  test('regular endpoint should accept payload under 2mb (e.g. 500kb)', async () => {
+    const payload = { data: 'A'.repeat(500 * 1024) }; // ~500 KB
+    const res = await fetch(`${baseUrl}/api/regular-test`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    assert.equal(res.status, 200);
+  });
+
+  test('regular endpoint should reject payload over 2mb with 413 Payload Too Large', async () => {
+    const payload = { data: 'A'.repeat(2.5 * 1024 * 1024) }; // ~2.5 MB (> 2MB)
+    const res = await fetch(`${baseUrl}/api/regular-test`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    assert.equal(res.status, 413);
+  });
+
+  test('bulk endpoint should accept payload over 2mb up to 10mb (e.g. 3mb)', async () => {
+    const payload = { data: 'A'.repeat(3 * 1024 * 1024) }; // ~3 MB (> 2MB, < 10MB)
+    const res = await fetch(`${baseUrl}/api/bulk-test`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    assert.equal(res.status, 200);
+  });
+});
